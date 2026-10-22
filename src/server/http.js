@@ -10,6 +10,7 @@ import { fileURLToPath } from "node:url";
 
 import { snapshot } from "./hardware.js";
 import { STAGES, runSuite } from "./runner.js";
+import { DEEP_LIMITS, normalizeDuration, runDeep } from "./deep.js";
 import { appendResult, deleteResult, getResult, listResults, localRank, updateResult } from "./store.js";
 import { buildCard, buildMarkdown } from "./report.js";
 import { PATHS, loadBaselines, loadSettings, saveSettings, TARGET_DIR, ensureDataDir } from "./settings.js";
@@ -32,13 +33,17 @@ const MIME = {
 
 const state = {
   status: "idle",
+  kind: null, // "fast" | "deep"
   stage: null,
+  phase: null,
   index: 0,
   total: STAGES.length,
   startedAt: 0,
   finishedAt: 0,
   error: null,
   events: [],
+  live: null, // 深度档的实时采样点
+  progress: null, // 深度档进度 {burnedSec, remainingSec, durationSec}
   resultId: null,
   cancelRequested: false,
 };
@@ -107,6 +112,7 @@ function serveStatic(res, urlPath) {
 function localLeaderboard(dim, limit = 50) {
   const all = [];
   for (const r of listResults(500)) {
+    if (r.kind === "deep") continue; // 深度档没有综合分，不进性能榜
     const value = dim === "overall" ? r.composite : r.dims?.[dim]?.score;
     if (Number.isFinite(value)) all.push({ ...r, value });
   }
@@ -141,12 +147,16 @@ async function startRun(body = {}) {
 
   Object.assign(state, {
     status: "running",
+    kind: "fast",
     stage: null,
+    phase: null,
     index: 0,
     startedAt: Date.now(),
     finishedAt: 0,
     error: null,
     events: [],
+    live: null,
+    progress: null,
     resultId: null,
     cancelRequested: false,
   });
@@ -221,6 +231,93 @@ async function startRun(body = {}) {
   return { started: true };
 }
 
+/** 深度档：烤机 + 温度/频率曲线 + 降频判定。不参与综合分，单独入档。 */
+async function startDeep(body = {}) {
+  if (state.status === "running") {
+    const err = new Error("已有测试在运行");
+    err.status = 409;
+    throw err;
+  }
+  const settings = loadSettings();
+  const target = body.targetDir || settings.targetDir || TARGET_DIR;
+  const durationSec = normalizeDuration(body.durationSec ?? DEEP_LIMITS.defaultSec);
+  const loadDisk = Boolean(body.loadDisk);
+  ensureDataDir();
+
+  Object.assign(state, {
+    status: "running",
+    kind: "deep",
+    stage: null,
+    phase: "baseline",
+    index: 0,
+    startedAt: Date.now(),
+    finishedAt: 0,
+    error: null,
+    events: [],
+    live: null,
+    progress: { durationSec, burnedSec: 0, remainingSec: durationSec },
+    resultId: null,
+    cancelRequested: false,
+  });
+
+  const hw = hardware(true);
+
+  (async () => {
+    try {
+      const run = await runDeep({
+        targetDir: target,
+        durationSec,
+        loadDisk,
+        shouldStop: () => state.cancelRequested,
+        onEvent: (ev) => {
+          if (ev.type === "phase") state.phase = ev.phase;
+          if (ev.type === "phase") state.events.push({ at: Date.now(), ...ev });
+          if (ev.type === "tick") {
+            state.live = ev.sample;
+            state.progress = { durationSec, burnedSec: ev.burnedSec, remainingSec: ev.remainingSec };
+          }
+          if (ev.type === "sample") state.live = { ...ev.sample };
+          if (state.events.length > 80) state.events.shift();
+        },
+      });
+
+      const result = {
+        id: randomUUID(),
+        ts: Date.now(),
+        kind: "deep",
+        suite: SUITE_VERSION,
+        client: CLIENT_VERSION,
+        fingerprint: hw.fingerprint,
+        arch: hw.arch,
+        hostname: hw.hostname,
+        hardware: { ...hw.hardware, volume: target },
+        stability: run.stability,
+        series: run.series,
+        preMops: run.preMops,
+        postMops: run.postMops,
+        burnedSec: run.burnedSec,
+        wallMs: run.wallMs,
+        loadDisk,
+        caveats: run.stability.notes,
+      };
+      appendResult(result);
+      state.status = run.cancelled ? "cancelled" : "done";
+      state.phase = "done";
+      state.finishedAt = Date.now();
+      state.resultId = result.id;
+      state.progress = { durationSec, burnedSec: run.burnedSec, remainingSec: 0 };
+      state.events.push({ at: Date.now(), type: "finished", resultId: result.id, status: state.status });
+    } catch (err) {
+      state.status = "error";
+      state.finishedAt = Date.now();
+      state.error = String(err?.message || err);
+      state.events.push({ at: Date.now(), type: "error", message: state.error });
+    }
+  })();
+
+  return { started: true, kind: "deep", durationSec };
+}
+
 async function handleApi(req, res, url) {
   const { pathname } = url;
   const method = req.method || "GET";
@@ -244,6 +341,8 @@ async function handleApi(req, res, url) {
       stages: STAGES,
       dimensions: DIMENSIONS,
       metrics: METRICS,
+      deepLimits: DEEP_LIMITS,
+      lastDeep: listResults(60).find((r) => r.kind === "deep") || null,
       localRank: listResults(1)[0] ? localRank(listResults(1)[0].composite) : null,
     });
   }
@@ -265,6 +364,16 @@ async function handleApi(req, res, url) {
   if (pathname === "/api/run/cancel" && method === "POST") {
     state.cancelRequested = true;
     return json(res, 200, { cancelling: true });
+  }
+
+  if (pathname === "/api/deep/run" && method === "POST") {
+    try {
+      const body = await readBody(req);
+      const out = await startDeep(body);
+      return json(res, 202, out);
+    } catch (e) {
+      return json(res, e.status || 400, { error: String(e.message || e) });
+    }
   }
 
   if (pathname === "/api/settings" && method === "GET") return json(res, 200, loadSettings());
@@ -341,6 +450,9 @@ async function handleApi(req, res, url) {
     if (action === "card") return json(res, 200, { text: buildCard(result) });
 
     if (action === "submit" && method === "POST") {
+      if ((result.kind || "fast") === "deep") {
+        return json(res, 400, { error: "稳定性成绩不参与性能榜（它测的是持续性能，不是算力）" });
+      }
       const body = await readBody(req);
       try {
         const out = await remote.submit(result, body.alias);

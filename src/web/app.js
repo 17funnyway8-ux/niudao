@@ -18,6 +18,7 @@ const state = {
   run: null,
   poll: null,
   board: { dim: "overall", arch: "", data: null, loading: false, error: null },
+  deep: { durationSec: 600, loadDisk: false, liveSeries: [] },
 };
 
 /* ---------------- api ---------------- */
@@ -105,6 +106,57 @@ function dimBlock(key, dim, data) {
   </div>`;
 }
 
+const fmtClock = (sec) => {
+  const s = Math.max(0, Math.round(sec || 0));
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+};
+
+const VERDICT_TONE = { good: "good", ok: "warn", warn: "warn", bad: "bad", unknown: "" };
+
+function verdictPill(level, headline) {
+  if (!headline) return "";
+  return `<span class="pill ${VERDICT_TONE[level] || ""}">${esc(headline)}</span>`;
+}
+
+/** 折线图：输入 [{t, value}]，输出 SVG。够用就好，不引图表库。 */
+function sparkSvg(points, { color = "#d7ff3e", unit = "", height = 132, label = "" } = {}) {
+  const pts = (points || []).filter((p) => typeof p.value === "number" && Number.isFinite(p.value));
+  if (pts.length < 2) return `<div class="empty" style="padding:18px">数据点不足（${pts.length}/2）</div>`;
+  const w = 760;
+  const h = height;
+  const xMax = Math.max(...pts.map((p) => p.t)) || 1;
+  const ys = pts.map((p) => p.value);
+  const yMin = Math.min(...ys);
+  const yMax = Math.max(...ys);
+  const span = yMax - yMin || Math.abs(yMax) * 0.1 || 1;
+  const lo = yMin - span * 0.12;
+  const hi = yMax + span * 0.12;
+  const X = (t) => 40 + (t / xMax) * (w - 56);
+  const Y = (v) => h - 22 - ((v - lo) / (hi - lo)) * (h - 40);
+  const d = pts.map((p, i) => `${i ? "L" : "M"}${X(p.t).toFixed(1)},${Y(p.value).toFixed(1)}`).join(" ");
+  const area = `${d} L${X(pts[pts.length - 1].t).toFixed(1)},${h - 22} L${X(pts[0].t).toFixed(1)},${h - 22} Z`;
+  const gridY = [0, 0.5, 1].map((f) => {
+    const v = lo + (hi - lo) * (1 - f);
+    const y = Y(v);
+    return `<line x1="40" y1="${y.toFixed(1)}" x2="${w - 16}" y2="${y.toFixed(1)}" stroke="#1a2530" stroke-width="1"/>
+            <text x="34" y="${(y + 3.5).toFixed(1)}" text-anchor="end" fill="#5d6d7c" font-size="10" font-family="monospace">${Math.round(v)}</text>`;
+  });
+  const gid = `g${Math.random().toString(36).slice(2, 8)}`;
+  return `<svg viewBox="0 0 ${w} ${h}" style="width:100%;height:auto;display:block" role="img" aria-label="${esc(label)}">
+    ${gridY.join("")}
+    <path d="${area}" fill="url(#${gid})" opacity="0.5"/>
+    <path d="${d}" fill="none" stroke="${color}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+    <circle cx="${X(pts[pts.length - 1].t).toFixed(1)}" cy="${Y(pts[pts.length - 1].value).toFixed(1)}" r="3" fill="${color}"/>
+    <text x="40" y="${h - 6}" fill="#5d6d7c" font-size="10" font-family="monospace">0s</text>
+    <text x="${w - 16}" y="${h - 6}" text-anchor="end" fill="#5d6d7c" font-size="10" font-family="monospace">${Math.round(xMax)}s</text>
+    <text x="${w - 16}" y="14" text-anchor="end" fill="#8b9aa9" font-size="11" font-family="monospace">${Math.round(yMax)}${esc(unit)}</text>
+    <defs><linearGradient id="${gid}" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="${color}" stop-opacity="0.45"/>
+      <stop offset="1" stop-color="${color}" stop-opacity="0"/>
+    </linearGradient></defs>
+  </svg>`;
+}
+
 /* ---------------- home ---------------- */
 function stageRow(stage, index, run) {
   const key = stage.key;
@@ -132,7 +184,8 @@ function stageRow(stage, index, run) {
 function homeView() {
   const boot = state.boot;
   const run = state.run || boot?.run;
-  const running = run?.status === "running";
+  const deepRunning = run?.status === "running" && run?.kind === "deep";
+  const running = run?.status === "running" && run?.kind !== "deep";
   const last = (boot?.history || [])[0];
   const lastFull = state.result && state.result.id === last?.id ? state.result : null;
   const doneCount = (run?.events || []).filter((e) => e.type === "stage" && e.status === "done").length;
@@ -142,7 +195,33 @@ function homeView() {
   const hw = boot?.hardware?.hardware || {};
   const base = boot?.baseline || {};
 
- const heroCard = running
+ const heroCard = deepRunning
+    ? (() => {
+        const p = run.progress || {};
+        const burned = p.burnedSec || 0;
+        const dur = p.durationSec || state.deep.durationSec || 600;
+        const pctDone = Math.min(100, (burned / Math.max(1, dur)) * 100);
+        const live = run.live || {};
+        const tempPoints = state.deep.liveSeries.map((s) => ({ t: s.t, value: s.cpuC }));
+        return `<div class="card">
+          <div class="card-head"><h2>正在烤机</h2><span class="sub">满载中，页面可以放着不管</span><span class="spacer"></span>
+            <button class="btn sm ghost" data-action="cancel-run">中止</button>
+          </div>
+          <div class="row" style="align-items:baseline;gap:10px">
+            <div class="score-num" style="font-size:34px">${fmtClock(burned)} <small>/ ${fmtClock(dur)}</small></div>
+            <span class="spacer"></span>
+            ${live.cpuC !== null && live.cpuC !== undefined ? `<span class="pill ${live.cpuC >= 90 ? "bad" : live.cpuC >= 80 ? "warn" : "good"}">${num(live.cpuC, 1)}°C</span>` : ""}
+            ${live.freqMhz ? `<span class="pill">${num(live.freqMhz)} MHz</span>` : ""}
+          </div>
+          <div class="progress"><i style="width:${pctDone}%"></i></div>
+          <div class="section-title" style="margin-top:16px">温度曲线（实时）</div>
+          ${sparkSvg(tempPoints, { unit: "°C", height: 150, label: "实时温度曲线" })}
+          <div class="faint" style="font-size:12px;margin-top:8px">
+            烤机结束后会再做一次多核跑分，用来算"满载后还剩多少性能"。
+          </div>
+        </div>`;
+      })()
+    : running
     ? `<div class="card">
         ${run?.stage ? "" : ""}
         <div class="card-head"><h2>正在体检</h2><span class="sub">别关页面，也别在这期间跑转码</span><span class="spacer"></span>
@@ -230,6 +309,45 @@ function homeView() {
       </div>
     </div>`;
 
+  const lastDeep = boot?.lastDeep;
+  const deepPresets = [180, 300, 600, 1200];
+  const deepCard = `<div class="card">
+      <div class="card-head">
+        <h2>深度体检 · 散热与降频</h2>
+        <span class="sub">满载跑一段时间，看还能剩多少性能</span>
+        <span class="spacer"></span>
+        ${lastDeep ? verdictPill(lastDeep.verdictLevel, lastDeep.verdict) : ""}
+      </div>
+      ${
+        lastDeep
+          ? `<div class="row" style="gap:14px;flex-wrap:wrap;margin-bottom:14px">
+              <span class="faint" style="font-size:12px">上次：${new Date(lastDeep.ts).toLocaleString("zh-CN", { hour12: false })}</span>
+              ${lastDeep.maxTempC ? `<span class="pill">最高 ${num(lastDeep.maxTempC, 1)}°C</span>` : ""}
+              <button class="btn sm ghost" data-action="open-result" data-id="${esc(lastDeep.id)}">看报告</button>
+            </div>`
+          : ""
+      }
+      <div class="row" style="gap:8px;flex-wrap:wrap;margin-bottom:12px">
+        ${deepPresets
+          .map(
+            (sec) =>
+              `<button class="btn sm ${state.deep.durationSec === sec ? "primary" : "ghost"}" data-action="deep-duration" data-sec="${sec}">${sec / 60} 分钟</button>`,
+          )
+          .join("")}
+      </div>
+      <label class="check" style="margin-bottom:14px">
+        <input type="checkbox" id="deep-disk" ${state.deep.loadDisk ? "checked" : ""} />
+        叠加磁盘写压力（更接近 RAID 重建时的机箱温度，但会磨损 SSD）
+      </label>
+      <div class="row">
+        <button class="btn ${deepRunning ? "" : "primary"}" data-action="start-deep" ${deepRunning ? "disabled" : ""}>开始深度体检</button>
+        <span class="faint" style="font-size:12px">会满载 ${state.deep.durationSec / 60} 分钟，建议在没人用的时候跑</span>
+      </div>
+      <div class="hint-box" style="margin-top:12px">
+        结论只看「满载前后的性能保持率」——这才是降频的真实代价。温度与频率作为旁证一起给你看。
+      </div>
+    </div>`;
+
   return `<div class="grid-2">
     <div class="stack">${heroCard}
       <div class="grid-3">
@@ -244,8 +362,83 @@ function homeView() {
           })
           .join("")}
       </div>
+      ${deepCard}
     </div>
     <div class="stack">${hwCard}${whyCard}</div>
+  </div>`;
+}
+
+/** 深度档报告：结论 + 三块关键数据 + 两条曲线 */
+function deepResultView(r) {
+  const s = r.stability || {};
+  const v = s.verdict || {};
+  const tempSeries = (r.series || []).map((p) => ({ t: p.t, value: p.cpuC }));
+  const freqSeries = (r.series || []).map((p) => ({ t: p.t, value: p.freqMhz }));
+
+  const cell = (label, value, hint = "") =>
+    `<div style="padding:10px 0;border-bottom:1px dashed var(--line-soft)">
+       <div class="faint" style="font-size:11.5px">${esc(label)}</div>
+       <div class="mono" style="font-size:19px">${value}</div>
+       ${hint ? `<div class="faint" style="font-size:11px">${esc(hint)}</div>` : ""}
+     </div>`;
+
+  return `<div class="stack">
+    <div class="row">
+      <button class="btn sm ghost" data-action="back">← 返回</button>
+      <span class="spacer"></span>
+      <span class="faint" style="font-size:12px">套件 v${esc(r.suite)} · ${new Date(r.ts).toLocaleString("zh-CN", { hour12: false })}</span>
+    </div>
+
+    <div class="card">
+      <div class="row" style="gap:12px;flex-wrap:wrap">
+        <h2 style="margin:0;font-size:20px">${esc(v.headline || "稳定性报告")}</h2>
+        ${verdictPill(v.level, s.cancelled ? "已中止" : "")}
+        <span class="spacer"></span>
+        <span class="pill">满载 ${(r.burnedSec || 0) < 90 ? `${Math.round(r.burnedSec || 0)} 秒` : `${Math.round((r.burnedSec || 0) / 60)} 分钟`}${r.loadDisk ? " · 含磁盘压力" : ""}</span>
+      </div>
+      <div class="score-sub" style="margin-top:8px">${esc(v.detail || "")}</div>
+      <div class="row" style="margin-top:14px;gap:8px;flex-wrap:wrap">
+        <a class="btn" href="/api/results/${esc(r.id)}/report.md" target="_blank" rel="noreferrer">Markdown 报告</a>
+        <a class="btn ghost" href="/api/results/${esc(r.id)}/export.json">导出 JSON</a>
+      </div>
+    </div>
+
+    <div class="grid-3">
+      <div class="card tight">
+        <div class="section-title">性能保持</div>
+        ${s.perf ? cell("冷态多核", `${num(s.perf.preMops)} <span class="faint" style="font-size:12px">MOps/s</span>`) : `<div class="faint">未采集</div>`}
+        ${s.perf ? cell("满载后多核", `${num(s.perf.postMops)} <span class="faint" style="font-size:12px">MOps/s</span>`) : ""}
+        ${s.perf ? cell("保持率", `<span style="color:${s.perf.keepPct >= 97 ? "var(--lime)" : s.perf.keepPct >= 92 ? "var(--amber)" : "var(--red)"}">${num(s.perf.keepPct, 1)}%</span>`, `损失 ${num(s.perf.lossPct, 1)}%`) : ""}
+      </div>
+      <div class="card tight">
+        <div class="section-title">温度</div>
+        ${s.temp ? cell("起始 → 结束", `${num(s.temp.startC, 1)} → ${num(s.temp.endC, 1)} <span class="faint" style="font-size:12px">°C</span>`) : `<div class="faint">无传感器</div>`}
+        ${s.temp ? cell("最高", `${num(s.temp.maxC, 1)} <span class="faint" style="font-size:12px">°C</span>`, `升温 ${num(s.temp.riseC, 1)}°C`) : ""}
+        ${s.temp && s.temp.plateauSec !== null ? cell("到达 90% 稳态", `${s.temp.plateauSec}s`) : ""}
+      </div>
+      <div class="card tight">
+        <div class="section-title">频率</div>
+        ${s.freq ? cell("峰值 → 稳态", `${num(s.freq.peakMhz)} → ${num(s.freq.steadyMhz)} <span class="faint" style="font-size:12px">MHz</span>`) : `<div class="faint">无频率信息</div>`}
+        ${s.freq && s.freq.nominalMhz ? cell("标称最高", `${num(s.freq.nominalMhz)} MHz`) : ""}
+        ${s.freq && s.freq.dropPct !== null ? cell("频率下降", `${num(s.freq.dropPct, 1)}%`) : ""}
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><h2>温度曲线</h2><span class="sub">逐秒采样，降采样后保留峰值</span></div>
+      ${sparkSvg(tempSeries, { color: "#ffb545", unit: "°C", height: 160, label: "温度曲线" })}
+      <div class="divider"></div>
+      <div class="card-head"><h2>频率曲线</h2><span class="sub">降频是否被功耗墙压住，一眼能看出来</span></div>
+      ${sparkSvg(freqSeries, { color: "#57c1ff", unit: "MHz", height: 140, label: "频率曲线" })}
+    </div>
+
+    ${
+      r.caveats?.length
+        ? `<div class="card tight"><div class="section-title">说明</div><div class="faint" style="font-size:12.5px;line-height:1.8">${r.caveats
+            .map((c) => `· ${esc(c)}`)
+            .join("<br/>")}</div></div>`
+        : ""
+    }
   </div>`;
 }
 
@@ -253,6 +446,7 @@ function homeView() {
 function resultView() {
   const r = state.result;
   if (!r) return `<div class="empty"><h3>加载中…</h3></div>`;
+  if ((r.kind || "fast") === "deep") return deepResultView(r);
   const s = r.scores;
   const dims = Object.entries(state.boot?.dimensions || {});
   const metrics = Object.entries(state.boot?.metrics || {});
@@ -449,23 +643,29 @@ function historyView() {
   return `<div class="card">
     <div class="card-head"><h2>成绩单</h2><span class="sub">本机历史，最多显示 30 条</span></div>
     <table class="table">
-      <thead><tr><th>时间</th><th>综合</th><th class="num">CPU</th><th class="num">内存</th><th class="num">存储</th><th></th></tr></thead>
+      <thead><tr><th>时间</th><th>类型</th><th class="num">分数 / 结论</th><th class="num">CPU</th><th class="num">内存</th><th class="num">存储</th><th></th></tr></thead>
       <tbody>
         ${items
-          .map(
-            (r) => `<tr>
+          .map((r) => {
+            const isDeep = r.kind === "deep";
+            return `<tr>
               <td class="nowrap">
                 <button class="btn sm ghost" data-action="open-result" data-id="${esc(r.id)}">${new Date(r.ts).toLocaleString("zh-CN", { hour12: false })}</button>
                 ${r.partial ? `<span class="pill warn">不完整</span>` : ""}
                 ${r.submitted ? `<span class="pill good">已提交</span>` : ""}
               </td>
-              <td><span class="mono">${num(r.composite)}</span> ${gradeBadge(r.grade)}</td>
-              <td class="num">${num(r.dims?.cpu?.score)}</td>
-              <td class="num">${num(r.dims?.memory?.score)}</td>
-              <td class="num">${num(r.dims?.storage?.score)}</td>
+              <td>${isDeep ? `<span class="pill">稳定性</span>` : `<span class="pill good">性能</span>`}</td>
+              <td class="num">${
+                isDeep
+                  ? `${verdictPill(r.verdictLevel, r.verdict)} ${r.maxTempC ? `<span class="faint">${num(r.maxTempC, 1)}°C</span>` : ""}`
+                  : `<span class="mono">${num(r.composite)}</span> ${gradeBadge(r.grade)}`
+              }</td>
+              <td class="num">${isDeep ? "—" : num(r.dims?.cpu?.score)}</td>
+              <td class="num">${isDeep ? "—" : num(r.dims?.memory?.score)}</td>
+              <td class="num">${isDeep ? "—" : num(r.dims?.storage?.score)}</td>
               <td class="num"><button class="btn sm danger" data-action="delete-result" data-id="${esc(r.id)}">删除</button></td>
-            </tr>`,
-          )
+            </tr>`;
+          })
           .join("")}
       </tbody>
     </table>
@@ -582,19 +782,40 @@ function stopPolling() {
   state.poll = null;
 }
 
+async function startDeep() {
+  try {
+    await api("/api/deep/run", {
+      method: "POST",
+      body: JSON.stringify({ durationSec: state.deep.durationSec, loadDisk: state.deep.loadDisk }),
+    });
+    state.deep.liveSeries = [];
+    state.view = "home";
+    toast(`开始深度体检，满载 ${Math.round(state.deep.durationSec / 60)} 分钟`);
+    render();
+    pollRun();
+  } catch (e) {
+    toast(e.message, "err");
+  }
+}
+
 function pollRun() {
   stopPolling();
   state.poll = setInterval(async () => {
     try {
       const run = await api("/api/run");
+      // 深度档：把实时采样攒成曲线
+      if (run.kind === "deep" && run.status === "running" && run.live && typeof run.live.cpuC === "number") {
+        const last = state.deep.liveSeries.at(-1);
+        if (!last || run.live.t > last.t) state.deep.liveSeries.push({ t: run.live.t, cpuC: run.live.cpuC });
+      }
       state.run = run;
       render();
       if (run.status !== "running") {
         stopPolling();
         await refreshBoot();
-        if (run.status === "done" && run.resultId) {
+        if ((run.status === "done" || run.status === "cancelled") && run.resultId) {
           await openResult(run.resultId);
-          toast("体检完成", "ok");
+          toast(run.status === "done" ? "体检完成" : "已中止，结果已保存", "ok");
         } else if (run.status === "error") {
           toast(`体检失败：${run.error || "未知错误"}`, "err");
         }
@@ -650,6 +871,11 @@ document.addEventListener("click", async (ev) => {
   const id = el.dataset.id;
 
   if (action === "start-run") return startRun();
+  if (action === "start-deep") return startDeep();
+  if (action === "deep-duration") {
+    state.deep.durationSec = Number(el.dataset.sec) || 600;
+    return render();
+  }
   if (action === "cancel-run") {
     await api("/api/run/cancel", { method: "POST" });
     toast("已请求中止，当前项跑完就停");
@@ -711,6 +937,9 @@ document.addEventListener("change", (ev) => {
   if (ev.target.id === "board-arch") {
     state.board.arch = ev.target.value;
     loadBoard();
+  }
+  if (ev.target.id === "deep-disk") {
+    state.deep.loadDisk = ev.target.checked;
   }
 });
 

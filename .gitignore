@@ -11,3 +11,6 @@ __pycache__/
 
 # 编辑器
 .DS_Store
+
+# 本地工具（fnpack 二进制）
+.tools/

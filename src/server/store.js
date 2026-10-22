@@ -36,6 +36,7 @@ export function listResults(limit = 50) {
     .map((r) => ({
       id: r.id,
       ts: r.ts,
+      kind: r.kind || "fast",
       suite: r.suite,
       composite: r.scores?.composite ?? 0,
       dims: r.scores?.dims ?? {},
@@ -44,6 +45,9 @@ export function listResults(limit = 50) {
       arch: r.arch,
       submitted: Boolean(r.submitted),
       partial: Boolean(r.scores?.partial),
+      verdict: r.stability?.verdict?.headline ?? "",
+      verdictLevel: r.stability?.verdict?.level ?? "",
+      maxTempC: r.stability?.temp?.maxC ?? null,
     }));
 }
 
@@ -79,9 +83,12 @@ export function updateResult(id, patch) {
   return hit;
 }
 
-/** 本机内的相对排名（没有排行榜服务器时的"迷你榜"） */
+/** 本机内的相对排名（没有排行榜服务器时的"迷你榜"）。只算快速档成绩。 */
 export function localRank(composite) {
-  const all = readAll().map((r) => r.scores?.composite ?? 0).filter((n) => n > 0);
+  const all = readAll()
+    .filter((r) => (r.kind || "fast") === "fast")
+    .map((r) => r.scores?.composite ?? 0)
+    .filter((n) => n > 0);
   if (!all.length) return null;
   const better = all.filter((n) => n > composite).length;
   return { total: all.length, better, best: Math.max(...all) };
