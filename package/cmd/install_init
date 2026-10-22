@@ -1,0 +1,24 @@
+#!/bin/bash
+# 安装前：环境预检。失败信息会经 TRIM_TEMP_LOGFILE 展示给用户。
+set -u
+
+ARCH="$(uname -m)"
+case "$ARCH" in
+  x86_64 | aarch64 | arm64) ;;
+  *)
+    echo "牛刀暂不支持当前架构：$ARCH（支持 x86_64 / aarch64）" > "$TRIM_TEMP_LOGFILE"
+    exit 1
+    ;;
+esac
+
+if [ -n "${TRIM_DATA_SHARE_PATHS:-}" ] || [ -n "${TRIM_PKGVAR:-}" ]; then
+  TARGET="${TRIM_PKGVAR:-/tmp}"
+  AVAIL_KB="$(df -Pk "$TARGET" 2>/dev/null | awk 'NR==2 {print $4}')"
+  if [ -n "$AVAIL_KB" ] && [ "$AVAIL_KB" -lt 2097152 ]; then
+    echo "应用所在卷可用空间不足 2GB，磁盘测试可能失败。建议清理后再试。" > "$TRIM_TEMP_LOGFILE"
+    # 空间不足不阻断安装，只提示
+  fi
+fi
+
+echo "环境检查通过：$ARCH / fnOS ${TRIM_SYS_VERSION:-未知版本}"
+exit 0

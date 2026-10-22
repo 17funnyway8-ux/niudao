@@ -1,0 +1,45 @@
+[
+  {
+    "stepTitle": "基本设置",
+    "items": [
+      {
+        "type": "text",
+        "field": "wizard_alias",
+        "label": "花名（上榜显示名）",
+        "initValue": "",
+        "rules": [{ "max": 16, "message": "最多 16 个字符" }]
+      },
+      {
+        "type": "select",
+        "field": "wizard_disk_mb",
+        "label": "磁盘顺序测试文件大小",
+        "initValue": "512",
+        "options": [
+          { "label": "256 MB（更快）", "value": "256" },
+          { "label": "512 MB（推荐）", "value": "512" },
+          { "label": "1024 MB（更稳）", "value": "1024" }
+        ]
+      },
+      {
+        "type": "tips",
+        "helpText": "牛刀会在应用数据目录所在卷上临时写这个大小的文件来测磁盘速度，测完立即删除。"
+      }
+    ]
+  },
+  {
+    "stepTitle": "天梯（可选）",
+    "items": [
+      {
+        "type": "text",
+        "field": "wizard_leaderboard",
+        "label": "排行榜服务地址",
+        "initValue": "",
+        "rules": [{ "pattern": "^(https?://.*)?$", "message": "需要以 http:// 或 https:// 开头，留空表示只用本地成绩" }]
+      },
+      {
+        "type": "tips",
+        "helpText": "没有公共服务器？项目自带一个零依赖的榜单服务，跑起来后把地址填这里（例如 http://192.168.1.10:8790）。留空也能正常使用，只是没有跨机器排名。"
+      }
+    ]
+  }
+]

@@ -1,0 +1,5 @@
+#!/bin/bash
+# 卸载后收尾：删掉残留的 socket（数据目录的清理在 uninstall_init 里按用户选择处理）
+set -u
+rm -f "${TRIM_APPDEST:-/var/apps/niudao/target}/app.sock" 2>/dev/null || true
+exit 0

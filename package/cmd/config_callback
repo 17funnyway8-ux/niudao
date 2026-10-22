@@ -1,0 +1,8 @@
+#!/bin/bash
+# 配置变更后：重启服务让新的 settings.json 生效
+set -u
+DIR="$(cd "$(dirname "$0")" && pwd)"
+"$DIR/main" stop > /dev/null 2>&1 || true
+"$DIR/main" start || exit 1
+echo "配置已应用。"
+exit 0

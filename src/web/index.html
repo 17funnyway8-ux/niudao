@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>牛刀 · 飞牛性能天梯</title>
+    <link rel="stylesheet" href="/styles.css" />
+    <link rel="icon" href="/favicon.svg" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">
+        <svg class="logo" viewBox="0 0 32 32" aria-hidden="true">
+          <rect x="1" y="1" width="30" height="30" rx="9" fill="url(#lg)" />
+          <path d="M9 21.5 13.2 13l3 5.2 2.3-3.4 4.5 6.7" fill="none" stroke="#0b0f14" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" />
+          <circle cx="21.8" cy="11" r="2.2" fill="#0b0f14" />
+          <defs>
+            <linearGradient id="lg" x1="0" y1="0" x2="32" y2="32">
+              <stop offset="0" stop-color="#e6ff6b" />
+              <stop offset="1" stop-color="#8fe04a" />
+            </linearGradient>
+          </defs>
+        </svg>
+        <div class="brand-text">
+          <strong>牛刀</strong>
+          <span id="brand-sub">飞牛性能天梯</span>
+        </div>
+      </div>
+      <nav class="tabs" id="tabs">
+        <button data-view="home" class="tab is-active">体检</button>
+        <button data-view="board" class="tab">天梯</button>
+        <button data-view="history" class="tab">成绩单</button>
+        <button data-view="settings" class="tab">设置</button>
+      </nav>
+      <div class="machine-chip" id="machine-chip" title="本机硬件">
+        <span class="dot"></span>
+        <span id="machine-label">读取中…</span>
+      </div>
+    </header>
+
+    <main id="app" class="app"></main>
+
+    <div class="toast-wrap" id="toasts"></div>
+
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>

@@ -1,0 +1,21 @@
+#!/bin/bash
+# 卸载前：尊重用户数据。只有用户在卸载向导里明确勾选清除，才删成绩数据。
+set -u
+
+DATA_DIR="${TRIM_PKGVAR:-/var/apps/niudao/var}"
+
+if [ "${wizard_purge_data:-false}" = "true" ]; then
+  case "$DATA_DIR" in
+    /var/apps/niudao/* | /vol*/@appdata/niudao*)
+      rm -rf "$DATA_DIR"
+      echo "已删除牛刀的历史成绩数据。"
+      ;;
+    *)
+      echo "数据目录不在预期范围内，为安全起见未删除: $DATA_DIR"
+      ;;
+  esac
+else
+  echo "已保留历史成绩数据：$DATA_DIR（重装后可继续查看）"
+fi
+
+exit 0

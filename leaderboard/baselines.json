@@ -1,0 +1,25 @@
+{
+  "suite": "1.0.0",
+  "client": "1.0.0",
+  "measured_at": "2026-10-22T17:07:25.622Z",
+  "machine": {
+    "cpu_model": "AMD Ryzen 7 5825U with Radeon Graphics",
+    "arch": "x64",
+    "cores": 8,
+    "threads": 16,
+    "mem_gb": 61
+  },
+  "note": "1000 分 = 这台基准机的实测水平；分数只用于同套件版本内的横向比较。",
+  "metrics": {
+    "cpu_single": 1814.7,
+    "cpu_multi": 14556.8,
+    "crypto_aes": 1239.4,
+    "zlib": 27,
+    "mem_copy": 17.55,
+    "mem_latency": 108,
+    "disk_seq_read": 419.5,
+    "disk_seq_write": 202,
+    "disk_rand_read": 6299,
+    "disk_rand_write": 8573
+  }
+}

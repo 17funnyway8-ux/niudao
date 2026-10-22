@@ -1,0 +1,13 @@
+# 构建产物
+package/app/runtime/
+package/*.fpk
+
+# 本地数据与缓存
+.data/
+leaderboard/data/
+node_modules/
+__pycache__/
+*.log
+
+# 编辑器
+.DS_Store

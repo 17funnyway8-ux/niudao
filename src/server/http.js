@@ -1,0 +1,430 @@
+/**
+ * 应用 HTTP 服务。零依赖：node:http + 手写路由。
+ * 运行时通过 Unix Socket 挂到飞牛统一网关（/app/niudao），开发时监听端口。
+ */
+import http from "node:http";
+import fs from "node:fs";
+import path from "node:path";
+import { randomUUID } from "node:crypto";
+import { fileURLToPath } from "node:url";
+
+import { snapshot } from "./hardware.js";
+import { STAGES, runSuite } from "./runner.js";
+import { appendResult, deleteResult, getResult, listResults, localRank, updateResult } from "./store.js";
+import { buildCard, buildMarkdown } from "./report.js";
+import { PATHS, loadBaselines, loadSettings, saveSettings, TARGET_DIR, ensureDataDir } from "./settings.js";
+import * as remote from "./remote.js";
+import { CLIENT_VERSION, DIMENSIONS, METRICS, SUITE_VERSION, computeScores, gradeOf } from "../shared/scoring.js";
+
+const HERE = path.dirname(fileURLToPath(import.meta.url));
+const WEB_DIR = [path.join(HERE, "web"), path.resolve(HERE, "..", "web")].find((p) => fs.existsSync(p)) || path.join(HERE, "web");
+
+const MIME = {
+  ".html": "text/html; charset=utf-8",
+  ".js": "text/javascript; charset=utf-8",
+  ".css": "text/css; charset=utf-8",
+  ".svg": "image/svg+xml",
+  ".png": "image/png",
+  ".json": "application/json; charset=utf-8",
+  ".ico": "image/x-icon",
+  ".webmanifest": "application/manifest+json",
+};
+
+const state = {
+  status: "idle",
+  stage: null,
+  index: 0,
+  total: STAGES.length,
+  startedAt: 0,
+  finishedAt: 0,
+  error: null,
+  events: [],
+  resultId: null,
+  cancelRequested: false,
+};
+
+let hwCache = { at: 0, value: null };
+function hardware(force = false) {
+  if (!force && hwCache.value && Date.now() - hwCache.at < 30_000) return hwCache.value;
+  hwCache = { at: Date.now(), value: snapshot({ targetDir: TARGET_DIR }) };
+  return hwCache.value;
+}
+
+const json = (res, code, body) => {
+  const buf = Buffer.from(JSON.stringify(body));
+  res.writeHead(code, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", "content-length": buf.length });
+  res.end(buf);
+};
+
+function readBody(req, limit = 128 * 1024) {
+  return new Promise((resolve, reject) => {
+    let size = 0;
+    const chunks = [];
+    req.on("data", (c) => {
+      size += c.length;
+      if (size > limit) {
+        reject(new Error("请求体过大"));
+        req.destroy();
+        return;
+      }
+      chunks.push(c);
+    });
+    req.on("end", () => {
+      if (!chunks.length) return resolve({});
+      try {
+        resolve(JSON.parse(Buffer.concat(chunks).toString("utf8")));
+      } catch (e) {
+        reject(new Error(`JSON 解析失败: ${e.message}`));
+      }
+    });
+    req.on("error", reject);
+  });
+}
+
+function serveStatic(res, urlPath) {
+  const rel = urlPath === "/" ? "index.html" : urlPath.replace(/^\/+/, "");
+  const full = path.join(WEB_DIR, path.normalize(rel));
+  if (!full.startsWith(WEB_DIR)) {
+    json(res, 403, { error: "非法路径" });
+    return;
+  }
+  fs.readFile(full, (err, buf) => {
+    if (err) {
+      // 单页应用：未知路径回落到 index.html
+      fs.readFile(path.join(WEB_DIR, "index.html"), (e2, html) => {
+        if (e2) return json(res, 404, { error: "资源不存在" });
+        res.writeHead(200, { "content-type": MIME[".html"], "cache-control": "no-cache" });
+        res.end(html);
+      });
+      return;
+    }
+    const ext = path.extname(full).toLowerCase();
+    res.writeHead(200, { "content-type": MIME[ext] || "application/octet-stream", "cache-control": "no-cache" });
+    res.end(buf);
+  });
+}
+
+function localLeaderboard(dim, limit = 50) {
+  const all = [];
+  for (const r of listResults(500)) {
+    const value = dim === "overall" ? r.composite : r.dims?.[dim]?.score;
+    if (Number.isFinite(value)) all.push({ ...r, value });
+  }
+  all.sort((a, b) => b.value - a.value);
+  return {
+    mode: "local",
+    dim,
+    total: all.length,
+    limit,
+    entries: all.slice(0, limit).map((e, i) => ({
+      rank: i + 1,
+      id: e.id,
+      alias: "",
+      value: e.value,
+      composite: e.composite,
+      arch: e.arch,
+      ts: e.ts,
+      hardware: { cpu_model: e.cpu_model, mem_gb: null },
+    })),
+  };
+}
+
+async function startRun(body = {}) {
+  if (state.status === "running") {
+    const err = new Error("已有测试在运行");
+    err.status = 409;
+    throw err;
+  }
+  const settings = loadSettings();
+  const target = body.targetDir || settings.targetDir || TARGET_DIR;
+  ensureDataDir();
+
+  Object.assign(state, {
+    status: "running",
+    stage: null,
+    index: 0,
+    startedAt: Date.now(),
+    finishedAt: 0,
+    error: null,
+    events: [],
+    resultId: null,
+    cancelRequested: false,
+  });
+
+  const hw = hardware(true);
+  const opts = {
+    diskSizeMb: Number(body.diskSizeMb) || settings.diskSizeMb || 512,
+    diskFileMb: Number(body.diskFileMb) || 512,
+    shouldStop: () => state.cancelRequested,
+  };
+
+  (async () => {
+    try {
+      const run = await runSuite({
+        targetDir: target,
+        opts,
+        onEvent: (ev) => {
+          if (ev.type === "stage") {
+            state.stage = ev.stage;
+            state.index = ev.index;
+            state.events.push({ at: Date.now(), ...ev });
+            if (state.events.length > 60) state.events.shift();
+          }
+        },
+      });
+
+      const baseline = loadBaselines();
+      const scores = computeScores(run.metrics, baseline.metrics);
+      const grade = gradeOf(scores.composite);
+      const result = {
+        id: randomUUID(),
+        ts: Date.now(),
+        suite: SUITE_VERSION,
+        client: CLIENT_VERSION,
+        fingerprint: hw.fingerprint,
+        arch: hw.arch,
+        hostname: hw.hostname,
+        hardware: { ...hw.hardware, volume: target },
+        metrics: run.metrics,
+        scores,
+        grade,
+        durations: run.durations,
+        detail: run.detail,
+        caveats: [...run.caveats, ...run.errors.map((e) => `未完成的测试：${e}`)],
+        errors: run.errors,
+        wallMs: run.wallMs,
+        env: { thermals: hw.thermals, loadavg: hw.loadavg, uptime_hours: hw.uptime_hours },
+        baselineSuite: baseline.suite,
+      };
+      appendResult(result);
+      state.status = run.cancelled ? "cancelled" : "done";
+      state.finishedAt = Date.now();
+      state.resultId = result.id;
+      state.events.push({ at: Date.now(), type: "finished", resultId: result.id, status: state.status });
+
+      if (settings.autoSubmit && settings.leaderboardUrl) {
+        try {
+          await remote.submit(result, settings.alias);
+          updateResult(result.id, { submitted: true, submittedAt: Date.now() });
+        } catch (e) {
+          state.events.push({ at: Date.now(), type: "submit-error", message: String(e.message || e) });
+        }
+      }
+    } catch (err) {
+      state.status = "error";
+      state.finishedAt = Date.now();
+      state.error = String(err?.message || err);
+      state.events.push({ at: Date.now(), type: "error", message: state.error });
+    }
+  })();
+
+  return { started: true };
+}
+
+async function handleApi(req, res, url) {
+  const { pathname } = url;
+  const method = req.method || "GET";
+
+  if (pathname === "/api/health") {
+    return json(res, 200, { ok: true, suite: SUITE_VERSION, client: CLIENT_VERSION, status: state.status });
+  }
+
+  if (pathname === "/api/bootstrap") {
+    const baseline = loadBaselines();
+    const lb = await remote.health();
+    return json(res, 200, {
+      suite: SUITE_VERSION,
+      client: CLIENT_VERSION,
+      baseline: { suite: baseline.suite, machine: baseline.machine, measured_at: baseline.measured_at, note: baseline.note },
+      settings: loadSettings(),
+      hardware: hardware(),
+      leaderboard: lb,
+      history: listResults(30),
+      run: state,
+      stages: STAGES,
+      dimensions: DIMENSIONS,
+      metrics: METRICS,
+      localRank: listResults(1)[0] ? localRank(listResults(1)[0].composite) : null,
+    });
+  }
+
+  if (pathname === "/api/hardware") return json(res, 200, hardware(url.searchParams.get("force") === "1"));
+
+  if (pathname === "/api/run" && method === "GET") return json(res, 200, state);
+
+  if (pathname === "/api/run" && method === "POST") {
+    try {
+      const body = await readBody(req);
+      const out = await startRun(body);
+      return json(res, 202, out);
+    } catch (e) {
+      return json(res, e.status || 400, { error: String(e.message || e) });
+    }
+  }
+
+  if (pathname === "/api/run/cancel" && method === "POST") {
+    state.cancelRequested = true;
+    return json(res, 200, { cancelling: true });
+  }
+
+  if (pathname === "/api/settings" && method === "GET") return json(res, 200, loadSettings());
+
+  if (pathname === "/api/settings" && method === "POST") {
+    const body = await readBody(req);
+    const patch = {};
+    for (const key of ["alias", "leaderboardUrl", "leaderboardToken", "autoSubmit", "targetDir"]) {
+      if (key in body) patch[key] = body[key];
+    }
+    if ("diskSizeMb" in body) patch.diskSizeMb = Math.max(64, Math.min(4096, Number(body.diskSizeMb) || 512));
+    if (patch.leaderboardUrl && !/^https?:\/\//i.test(String(patch.leaderboardUrl))) {
+      return json(res, 400, { error: "排行榜地址必须以 http:// 或 https:// 开头" });
+    }
+    if (patch.targetDir) {
+      // 校验用户填的目录：必须是已存在、可写、是目录。
+      // 注意：绝不能对用户输入的路径做 recursive mkdir —— 某些文件系统（如 procfs）的 mkdir
+      // 返回 ENOENT，会让 Node 的递归建目录陷入死循环，直接把整个事件循环卡死。
+      const dir = String(patch.targetDir);
+      if (!path.isAbsolute(dir)) {
+        return json(res, 400, { error: "测试目录必须是绝对路径，例如 /vol1/@appdata/niudao" });
+      }
+      let stat = null;
+      try {
+        stat = fs.statSync(dir);
+      } catch {
+        return json(res, 400, { error: `测试目录不存在：${dir}（请先创建，或换成已存在的卷目录）` });
+      }
+      if (!stat.isDirectory()) return json(res, 400, { error: `不是目录：${dir}` });
+      try {
+        fs.accessSync(dir, fs.constants.W_OK);
+      } catch {
+        return json(res, 400, { error: `测试目录不可写：${dir}（应用以 niudao 用户运行，请给它写权限）` });
+      }
+      const probe = path.join(dir, ".niudao-probe");
+      try {
+        fs.writeFileSync(probe, "ok");
+        fs.rmSync(probe, { force: true });
+      } catch (e) {
+        return json(res, 400, { error: `测试目录写入失败：${dir}（${e.code || e.message}）` });
+      }
+      patch.targetDir = dir;
+    }
+    const next = saveSettings(patch);
+    hwCache = { at: 0, value: null };
+    return json(res, 200, next);
+  }
+
+  if (pathname === "/api/results" && method === "GET") {
+    return json(res, 200, { items: listResults(Number(url.searchParams.get("limit")) || 50) });
+  }
+
+  const resultMatch = pathname.match(/^\/api\/results\/([A-Za-z0-9._-]+)(?:\/(submit|report\.md|export\.json|card))?$/);
+  if (resultMatch) {
+    const [, id, action] = resultMatch;
+    const result = getResult(id);
+    if (!result) return json(res, 404, { error: "找不到这次成绩" });
+
+    if (!action && method === "GET") return json(res, 200, result);
+    if (!action && method === "DELETE") return json(res, 200, { deleted: deleteResult(id) });
+
+    if (action === "report.md") {
+      const md = buildMarkdown(result);
+      res.writeHead(200, { "content-type": "text/markdown; charset=utf-8", "cache-control": "no-store" });
+      return res.end(md);
+    }
+    if (action === "export.json") {
+      res.writeHead(200, {
+        "content-type": "application/json; charset=utf-8",
+        "content-disposition": `attachment; filename="niudao-${id.slice(0, 8)}.json"`,
+      });
+      return res.end(JSON.stringify(result, null, 2));
+    }
+    if (action === "card") return json(res, 200, { text: buildCard(result) });
+
+    if (action === "submit" && method === "POST") {
+      const body = await readBody(req);
+      try {
+        const out = await remote.submit(result, body.alias);
+        updateResult(id, { submitted: true, submittedAt: Date.now() });
+        return json(res, 200, out);
+      } catch (e) {
+        const msg = String(e.message || e);
+        const hint = msg === "NO_LEADERBOARD" ? "还没有配置排行榜地址（设置 → 排行服务器）" : msg;
+        return json(res, 502, { error: hint });
+      }
+    }
+    return json(res, 405, { error: "方法不允许" });
+  }
+
+  if (pathname === "/api/leaderboard") {
+    const dim = url.searchParams.get("dim") || "overall";
+    const arch = url.searchParams.get("arch") || "";
+    const limit = Math.min(200, Number(url.searchParams.get("limit")) || 50);
+    if (!remote.isConfigured()) {
+      const local = localLeaderboard(dim, limit);
+      const latest = listResults(1)[0];
+      return json(res, 200, {
+        ...local,
+        me: latest ? { id: latest.id, value: latest.composite, rank: local.entries.findIndex((e) => e.id === latest.id) + 1 || null } : null,
+      });
+    }
+    try {
+      const latest = getResult(state.resultId) || listResults(1)[0] || null;
+      const score = latest
+        ? dim === "overall"
+          ? latest.scores?.composite ?? latest.composite ?? null
+          : latest.scores?.dims?.[dim]?.score ?? latest.dims?.[dim]?.score ?? null
+        : null;
+      const data = await remote.leaderboard({ dim, arch, limit, score });
+      return json(res, 200, { mode: "remote", ...data });
+    } catch (e) {
+      return json(res, 502, { error: String(e.message || e) });
+    }
+  }
+
+  if (pathname === "/api/stats") {
+    if (!remote.isConfigured()) return json(res, 200, { mode: "local", total: listResults(500).length });
+    try {
+      return json(res, 200, { mode: "remote", ...(await remote.stats({ arch: url.searchParams.get("arch") || "" })) });
+    } catch (e) {
+      return json(res, 502, { error: String(e.message || e) });
+    }
+  }
+
+  return json(res, 404, { error: "接口不存在" });
+}
+
+export function createServer() {
+  return http.createServer((req, res) => {
+    const url = new URL(req.url || "/", "http://localhost");
+    if (url.pathname.startsWith("/api/")) {
+      handleApi(req, res, url).catch((err) => {
+        json(res, 500, { error: String(err?.message || err) });
+      });
+      return;
+    }
+    serveStatic(res, url.pathname);
+  });
+}
+
+export function start({ port = 0, socketPath = "" } = {}) {
+  const server = createServer();
+  return new Promise((resolve, reject) => {
+    server.once("error", reject);
+    const done = () => {
+      const addr = server.address();
+      resolve({ server, port: typeof addr === "object" && addr ? addr.port : port, socketPath });
+    };
+    if (socketPath) {
+      try {
+        fs.rmSync(socketPath, { force: true });
+      } catch {
+        /* ignore */
+      }
+      server.listen(socketPath, done);
+    } else {
+      server.listen(port, "0.0.0.0", done);
+    }
+  });
+}
+
+export { PATHS };

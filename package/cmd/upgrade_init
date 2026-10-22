@@ -1,0 +1,5 @@
+#!/bin/bash
+# 升级前：保留历史成绩（数据在 TRIM_PKGVAR，本就不随包体替换）
+set -u
+echo "升级牛刀 ${TRIM_OLD_APPVER:-?} → ${TRIM_APPVER:-?}；历史成绩保存在 ${TRIM_PKGVAR:-/var/apps/niudao/var}，不会丢失。"
+exit 0

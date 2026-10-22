@@ -1,0 +1,17 @@
+[
+  {
+    "stepTitle": "卸载",
+    "items": [
+      {
+        "type": "switch",
+        "field": "wizard_purge_data",
+        "label": "同时删除历史成绩数据",
+        "initValue": "false"
+      },
+      {
+        "type": "tips",
+        "helpText": "不勾选的话，成绩单会留在应用数据目录，重装后还能看到。"
+      }
+    ]
+  }
+]
