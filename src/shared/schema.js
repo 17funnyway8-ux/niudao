@@ -51,6 +51,7 @@ export function validateSubmission(input) {
     cores: num(hw.cores) ?? 0,
     threads: num(hw.threads) ?? 0,
     mem_gb: Math.round(num(hw.mem_gb) ?? 0),
+    mem_gib: Number.isFinite(num(hw.mem_gib)) ? Math.round(num(hw.mem_gib) * 10) / 10 : null,
     os_version: str(hw.os_version, 40),
     kernel: str(hw.kernel, 60),
     board: str(hw.board, 96),

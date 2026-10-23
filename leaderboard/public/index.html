@@ -3,38 +3,48 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>牛刀天梯 · 飞牛 NAS 性能排行</title>
+    <title>牛刀天梯 · fnOS 性能排行</title>
     <style>
-      :root { color-scheme: dark; }
+      :root {
+        color-scheme: light dark;
+        --bg: #f6f6f3; --panel: #fff; --ink: #17181a; --muted: #5c636d; --faint: #8b9099;
+        --line: #d9d9d2; --line-soft: #e9e9e2; --accent: #1f5a94;
+        --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #17181a; --panel: #1d1f22; --ink: #e6e6e3; --muted: #9ca1a8; --faint: #727880;
+          --line: #33363b; --line-soft: #26292d; --accent: #7fb0dc;
+        }
+      }
       * { box-sizing: border-box; }
-      body {
-        margin: 0; background: #0b0f14; color: #e7eef5;
-        font: 14px/1.55 system-ui, -apple-system, "Segoe UI", "PingFang SC", sans-serif;
-        background-image: radial-gradient(900px 420px at 10% -10%, rgba(215,255,62,.08), transparent 60%);
-        background-repeat: no-repeat;
-      }
-      .wrap { max-width: 940px; margin: 0 auto; padding: 32px 20px 64px; }
-      header { display: flex; align-items: baseline; gap: 12px; margin-bottom: 8px; }
-      h1 { font-size: 20px; margin: 0; letter-spacing: .04em; }
-      .sub { color: #5d6d7c; font-size: 12.5px; }
-      .bar { display: flex; gap: 8px; align-items: center; margin: 18px 0; flex-wrap: wrap; }
+      body { margin: 0; background: var(--bg); color: var(--ink); font: 13.5px/1.55 var(--sans); }
+      .wrap { max-width: 940px; margin: 0 auto; padding: 28px 20px 64px; }
+      header { display: flex; align-items: baseline; gap: 12px; border-bottom: 1px solid var(--line); padding-bottom: 12px; }
+      h1 { font-size: 16px; margin: 0; letter-spacing: .04em; }
+      .sub { color: var(--faint); font-size: 12px; }
+      .bar { display: flex; gap: 4px; align-items: center; margin: 14px 0; flex-wrap: wrap; }
       button, select {
-        background: #16202b; color: #e7eef5; border: 1px solid #21303d;
-        border-radius: 9px; padding: 6px 13px; font: inherit; cursor: pointer;
+        background: var(--panel); color: var(--ink); border: 1px solid var(--line);
+        border-radius: 3px; padding: 4px 10px; font: inherit; font-size: 12.5px; cursor: pointer;
       }
-      button.on { background: #d7ff3e; border-color: #d7ff3e; color: #0b0f14; font-weight: 600; }
-      table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
-      th { text-align: left; font-weight: 500; font-size: 11px; letter-spacing: .08em; text-transform: uppercase;
-           color: #5d6d7c; padding: 8px 10px; border-bottom: 1px solid #21303d; }
-      td { padding: 10px; border-bottom: 1px solid #1a2530; }
-      td.n { text-align: right; font-family: ui-monospace, monospace; font-variant-numeric: tabular-nums; }
-      tr:hover td { background: rgba(255,255,255,.02); }
-      .rank { font-family: ui-monospace, monospace; color: #5d6d7c; width: 48px; }
-      .rank.top { color: #d7ff3e; font-weight: 700; }
-      .cpu { color: #8b9aa9; font-size: 11.5px; }
-      .empty { color: #5d6d7c; text-align: center; padding: 48px 0; }
-      .foot { margin-top: 22px; color: #45535f; font-size: 12px; line-height: 1.8; }
-      .pill { display: inline-block; border: 1px solid #21303d; border-radius: 999px; padding: 1px 8px; font-size: 11px; color: #8b9aa9; }
+      button.on { background: var(--ink); border-color: var(--ink); color: var(--panel); font-weight: 600; }
+      table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+      th {
+        text-align: left; font-weight: 500; font-size: 10.5px; letter-spacing: .1em;
+        text-transform: uppercase; color: var(--faint); padding: 6px 8px;
+        border-bottom: 1px solid var(--line); white-space: nowrap;
+      }
+      td { padding: 7px 8px; border-bottom: 1px solid var(--line-soft); }
+      td.n { text-align: right; font-family: var(--mono); font-variant-numeric: tabular-nums; }
+      .rank { font-family: var(--mono); color: var(--faint); width: 44px; }
+      .rank.top { color: var(--ink); font-weight: 600; }
+      .cpu { color: var(--faint); font-size: 11.5px; }
+      .empty { color: var(--faint); text-align: center; padding: 40px 0; }
+      .foot { margin-top: 20px; padding-top: 12px; border-top: 1px solid var(--line); color: var(--faint); font-size: 11.5px; line-height: 1.8; }
+      .tag { border: 1px solid var(--line); border-radius: 2px; padding: 0 4px; font-size: 10.5px; color: var(--muted); }
+      a { color: var(--accent); }
     </style>
   </head>
   <body>
@@ -49,7 +59,7 @@
         <button data-dim="cpu">CPU</button>
         <button data-dim="memory">内存</button>
         <button data-dim="storage">存储</button>
-        <select id="arch">
+        <select id="arch" aria-label="架构">
           <option value="">全部架构</option>
           <option value="x64">x86_64</option>
           <option value="arm64">ARM64</option>
@@ -58,17 +68,14 @@
       </div>
 
       <table>
-        <thead>
-          <tr><th class="rank">#</th><th>机器</th><th class="n">分数</th><th class="n">综合</th></tr>
-        </thead>
-        <tbody id="rows">
-          <tr><td colspan="4" class="empty">载入中…</td></tr>
-        </tbody>
+        <thead><tr><th class="rank">#</th><th>机器</th><th class="n">分数</th><th class="n">综合</th></tr></thead>
+        <tbody id="rows"><tr><td colspan="4" class="empty">载入中…</td></tr></tbody>
       </table>
 
-      <div class="foot">
-        分数由服务端根据原始指标重算，客户端无法伪造；同一台机器（硬件指纹）只保留最好成绩；跨套件版本不混榜。<br />
-        想上榜：在飞牛 fnOS 安装「牛刀」应用，设置里填上本服务地址，跑一次体检即可。
+      <div class="foot" id="foot">
+        分数由服务端依据原始指标重算，客户端无法直接提交分数；同一台机器（硬件指纹）只保留最好成绩；跨套件版本不混榜。
+        样本不足 30 台时不显示百分位。<br />
+        想上榜：在飞牛 fnOS 安装「牛刀」，设置里填入本服务地址，跑一次体检即可。
       </div>
     </div>
 
@@ -84,9 +91,11 @@
         try {
           const res = await fetch(`/api/v1/leaderboard?${q}`);
           const data = await res.json();
-          document.getElementById("meta").textContent = `${num(data.total)} 台机器 · 套件 v${data.suite || "-"} · 每 100 分一档`;
+          const stats = data.stats || {};
+          document.getElementById("meta").textContent =
+            `${num(data.total)} 台机器 · 套件 v${data.suite || "-"}` + (stats.gated ? ` · 样本不足 ${num(stats.n)}/30` : "");
           if (!data.entries?.length) {
-            rows.innerHTML = `<tr><td colspan="4" class="empty">榜上还没有机器，去装个牛刀跑一次。</td></tr>`;
+            rows.innerHTML = `<tr><td colspan="4" class="empty">榜上还没有机器。</td></tr>`;
             return;
           }
           rows.innerHTML = data.entries
@@ -95,10 +104,10 @@
                 <td class="rank ${e.rank <= 3 ? "top" : ""}">${e.rank}</td>
                 <td>
                   <div>${esc(e.alias || e.hardware?.cpu_model || "匿名机器")}</div>
-                  <div class="cpu">${esc(e.hardware?.cpu_model || "")}${e.hardware?.mem_gb ? " · " + e.hardware.mem_gb + "GB" : ""} <span class="pill">${esc(e.arch)}</span></div>
+                  <div class="cpu">${esc(e.hardware?.cpu_model || "")}${e.hardware?.mem_gb ? " · " + e.hardware.mem_gb + "GB" : ""} <span class="tag">${esc(e.arch)}</span></div>
                 </td>
                 <td class="n">${num(e.value)}</td>
-                <td class="n" style="color:#8b9aa9">${num(e.composite)}</td>
+                <td class="n" style="color:var(--faint)">${num(e.composite)}</td>
               </tr>`,
             )
             .join("");

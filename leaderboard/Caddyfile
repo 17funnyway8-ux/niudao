@@ -1,0 +1,14 @@
+# Caddy 自动申请 Let's Encrypt 证书并反代到榜单服务
+{$SITE_DOMAIN} {
+	encode gzip
+	reverse_proxy lb:8790
+	log {
+		output stdout
+		format console
+	}
+	header {
+		# 榜单页是公开的，但别让搜索引擎把花名刷到奇怪的地方
+		X-Content-Type-Options nosniff
+		Referrer-Policy no-referrer
+	}
+}

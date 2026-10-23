@@ -64,44 +64,9 @@ function toast(message, kind = "") {
 /* ---------------- shared bits ---------------- */
 const GRADE_ORDER = ["S", "A", "B", "C", "D"];
 
-function gradeBadge(grade, label) {
+function gradeBadge(grade) {
   const g = grade || "D";
-  return `<span class="grade ${esc(g)}">${esc(g)} 级${label ? ` · ${esc(label)}` : ""}</span>`;
-}
-
-function gaugeSvg(score, cap = 1800) {
-  const clamped = Math.max(0, Math.min(score || 0, cap));
-  const ratio = clamped / cap;
-  const start = -210;
-  const sweep = 240;
-  const angle = start + sweep * ratio;
-  const r = 62;
-  const cx = 90;
-  const cy = 86;
-  const arc = (a0, a1, stroke, width, opacity = 1) => {
-    const p = (a) => [cx + r * Math.cos((a * Math.PI) / 180), cy + r * Math.sin((a * Math.PI) / 180)];
-    const [x0, y0] = p(a0);
-    const [x1, y1] = p(a1);
-    const large = Math.abs(a1 - a0) > 180 ? 1 : 0;
-    return `<path d="M${x0.toFixed(1)},${y0.toFixed(1)} A${r},${r} 0 ${large} 1 ${x1.toFixed(1)},${y1.toFixed(1)}" fill="none" stroke="${stroke}" stroke-width="${width}" stroke-linecap="round" opacity="${opacity}"/>`;
-  };
-  const needle = (() => {
-    const a = (angle * Math.PI) / 180;
-    const x = cx + (r - 12) * Math.cos(a);
-    const y = cy + (r - 12) * Math.sin(a);
-    return `<line x1="${cx}" y1="${cy}" x2="${x.toFixed(1)}" y2="${y.toFixed(1)}" stroke="#d7ff3e" stroke-width="3" stroke-linecap="round"/>`;
-  })();
-  return `<svg class="gauge" viewBox="0 0 180 130" role="img" aria-label="综合分仪表">
-    ${arc(start, start + sweep, "#1b2732", 12)}
-    ${score ? arc(start, angle, "url(#gaugeGrad)", 12) : ""}
-    ${arc(-30, -30, "#3a4b5a", 3)}
-    <circle cx="${cx}" cy="${cy}" r="5" fill="#d7ff3e"/>
-    ${score ? needle : ""}
-    <defs><linearGradient id="gaugeGrad" x1="0" y1="1" x2="1" y2="0">
-      <stop offset="0" stop-color="#8fe04a"/><stop offset="1" stop-color="#d7ff3e"/>
-    </linearGradient></defs>
-    <text x="${cx}" y="${cy + 30}" text-anchor="middle" fill="#5d6d7c" font-size="10" font-family="monospace">基准 ${num(1000)}</text>
-  </svg>`;
+  return `<span class="grade ${esc(g)}">${esc(g)} 级</span>`;
 }
 
 function dimBlock(key, dim, data) {
@@ -110,13 +75,9 @@ function dimBlock(key, dim, data) {
   const pct = score ? Math.max(2, Math.min(100, (score / 1600) * 100)) : 0;
   const weight = Math.round((dim.weight || 0) * 100);
   return `<div class="dim">
-    <div class="dim-top">
-      <span class="dim-name">${esc(dim.label)}</span>
-      <span class="dim-weight">权重 ${weight}%</span>
-      <span class="dim-score">${score === null || score === undefined ? "—" : num(score)}</span>
-    </div>
-    <div class="bar ${cls} tick"><i style="width:${pct}%"></i></div>
-    <div class="dim-blurb">${esc(dim.blurb || "")}</div>
+    <span class="dim-name" title="权重 ${weight}%">${esc(dim.label)}</span>
+    <span class="bar"><i style="width:${pct}%"></i></span>
+    <span class="dim-score">${score === null || score === undefined ? "—" : num(score)}</span>
   </div>`;
 }
 
@@ -180,7 +141,8 @@ function homeView() {
   const run = state.run || boot?.run;
   const deepRunning = run?.status === "running" && run?.kind === "deep";
   const running = run?.status === "running" && run?.kind !== "deep";
-  const last = (boot?.history || [])[0];
+  // 首页摘要只看快速档（深度档没有综合分）
+  const last = (boot?.history || []).find((r) => r.kind !== "deep") || null;
   const lastFull = state.result && state.result.id === last?.id ? state.result : null;
   const doneCount = (run?.events || []).filter((e) => e.type === "stage" && e.status === "done").length;
   const total = boot?.stages?.length || 6;
@@ -226,30 +188,27 @@ function homeView() {
         <div class="stage-list" style="margin-top:16px">${(boot.stages || []).map((s, i) => stageRow(s, i, run)).join("")}</div>
       </div>`
     : `<div class="card">
-        <div class="hero">
-          <div class="hero-main">
-            <div class="row" style="gap:12px">
-              <div class="score-num">${last ? num(last.composite) : "—"}<small>综合分</small></div>
-              ${last ? gradeBadge(last.grade) : `<span class="pill">还没测过</span>`}
-            </div>
-            <div class="score-sub">
-              ${
-                last
-                  ? `最近一次：${new Date(last.ts).toLocaleString("zh-CN", { hour12: false })} · 单核 ${num(last.dims?.cpu?.score)} / 存储 ${num(last.dims?.storage?.score)}`
-                  : "约 40 秒，跑 6 项，给这台机器出一份能拿去比的体检报告。"
-              }
-            </div>
-            <div class="row" style="margin-top:18px">
-              <button class="btn primary" data-action="start-run">${last ? "再测一次" : "开始体检"}</button>
-              ${last ? `<button class="btn ghost" data-action="open-result" data-id="${esc(last.id)}">查看报告</button>` : ""}
-            </div>
+        <div class="card-head">
+          <h2>最近一次体检</h2>
+          <span class="sub">${last ? new Date(last.ts).toLocaleString("zh-CN", { hour12: false }) : "尚未测量"}</span>
+          <span class="spacer"></span>
+          ${last ? gradeBadge(last.grade) : ""}
+        </div>
+        <div class="score-row">
+          <div class="score-num">${last ? num(last.composite) : "—"}<small>综合分</small></div>
+          <div class="score-meta">
             ${
-              boot?.settings?.autoSubmit && boot?.settings?.leaderboardUrl
-                ? `<div class="faint" style="margin-top:10px;font-size:12px">测完会自动提交到天梯（设置里可关）</div>`
-                : ""
+              last
+                ? `<span class="score-sub">CPU ${num(last.dims?.cpu?.score)} · 内存 ${num(last.dims?.memory?.score)} · 存储 ${num(last.dims?.storage?.score)}</span>
+                   <span class="faint" style="font-size:11.5px">套件 v${esc(last.suite || boot?.suite || "—")} · 基准 1,000</span>`
+                : `<span class="score-sub">六项实测，约 40 秒；结果可导出报告并提交到天梯。</span>`
             }
           </div>
-          ${gaugeSvg(last?.composite || 0)}
+          <span class="spacer"></span>
+          <div class="row">
+            <button class="btn primary" data-action="start-run">${last ? "重新测量" : "开始体检"}</button>
+            ${last ? `<button class="btn" data-action="open-result" data-id="${esc(last.id)}">打开报告</button>` : ""}
+          </div>
         </div>
         ${
           last
@@ -259,14 +218,19 @@ function homeView() {
                  .join("")}`
             : ""
         }
+        ${
+          boot?.settings?.autoSubmit && boot?.settings?.leaderboardUrl
+            ? `<div class="notice" style="margin-top:12px">测完会自动提交到天梯（可在设置中关闭）。</div>`
+            : ""
+        }
       </div>`;
 
   const hwCard = `<div class="card tight">
-      <div class="card-head"><h2>这台机器</h2><span class="sub">用于天梯匹配</span></div>
+      <div class="card-head"><h2>硬件</h2><span class="sub">天梯按此匹配</span></div>
       <dl class="kv">
         <dt>CPU</dt><dd>${esc(hw.cpu_model || "—")}</dd>
         <dt>核心</dt><dd>${hw.cores || "—"} 核 / ${hw.threads || "—"} 线程</dd>
-        <dt>内存</dt><dd>${hw.mem_gb || "—"} GB</dd>
+        <dt>内存</dt><dd>${hw.mem_gb || "—"} GB${hw.mem_gib ? ` <span class="faint">（系统可见 ${hw.mem_gib} GiB）</span>` : ""}</dd>
         <dt>显卡</dt><dd>${esc(hw.gpu || "未识别")}</dd>
         <dt>系统</dt><dd>fnOS ${esc(hw.os_version || "—")}</dd>
         <dt>测试卷</dt><dd class="mono truncate">${esc(hw.volume || boot?.settings?.targetDir || "—")}</dd>
@@ -292,14 +256,11 @@ function homeView() {
     </div>`;
 
   const whyCard = `<div class="card tight">
-      <div class="card-head"><h2>测什么，不测什么</h2></div>
-      <div class="faint" style="font-size:12.5px;line-height:1.75">
-        测：CPU 单核/多核、AES 与 zlib 真实吞吐、内存带宽与延迟、磁盘顺序读写、4K 随机读写（O_DIRECT，绕过缓存）。<br/>
-        不测：显卡编解码、网络吞吐、功耗与噪音 —— 这些得靠实测环境，跑分软件替代不了。
-      </div>
-      <div class="divider"></div>
-      <div class="faint" style="font-size:12.5px">
-        磁盘测试会在测试卷上临时写 512MB 文件，结束自动删除。测试期间 CPU 会跑满约 40 秒。
+      <div class="card-head"><h2>测量范围</h2></div>
+      <div class="notice">
+        测：CPU 单核/多核、AES-256-GCM、zlib、内存带宽与延迟、磁盘顺序与 4K 随机（O_DIRECT）。<br/>
+        不测：显卡编解码、网络吞吐、功耗与噪音。<br/>
+        磁盘测试会在测试卷写入临时文件，结束后删除。
       </div>
     </div>`;
 
@@ -307,8 +268,8 @@ function homeView() {
   const deepPresets = [180, 300, 600, 1200];
   const deepCard = `<div class="card">
       <div class="card-head">
-        <h2>深度体检 · 散热与降频</h2>
-        <span class="sub">满载跑一段时间，看还能剩多少性能</span>
+        <h2>持续负载（深度档）</h2>
+        <span class="sub">满载运行，测逐轮稳定性与温度</span>
         <span class="spacer"></span>
         ${lastDeep ? verdictPill(lastDeep.verdictLevel, lastDeep.verdict) : ""}
       </div>
@@ -337,25 +298,13 @@ function homeView() {
         <button class="btn ${deepRunning ? "" : "primary"}" data-action="start-deep" ${deepRunning ? "disabled" : ""}>开始深度体检</button>
         <span class="faint" style="font-size:12px">会满载 ${state.deep.durationSec / 60} 分钟，建议在没人用的时候跑</span>
       </div>
-      <div class="hint-box" style="margin-top:12px">
-        结论只看「满载前后的性能保持率」——这才是降频的真实代价。温度与频率作为旁证一起给你看。
+      <div class="notice" style="margin-top:12px">
+        稳定性按逐轮吞吐计算（最差轮 ÷ 最好轮），≥97% 判合格；温度与频率作为旁证。
       </div>
     </div>`;
 
   return `<div class="grid-2">
     <div class="stack">${heroCard}
-      <div class="grid-3">
-        ${Object.entries(boot?.dimensions || {})
-          .map(([k, d]) => {
-            const sc = last?.dims?.[k]?.score;
-            return `<div class="card tight">
-              <div class="faint" style="font-size:11.5px;letter-spacing:.08em;text-transform:uppercase">${esc(d.label)}</div>
-              <div class="mono" style="font-size:26px;margin-top:6px">${sc === null || sc === undefined ? "—" : num(sc)}</div>
-              <div class="bar ${k === "cpu" ? "" : k === "memory" ? "blue" : "violet"}"><i style="width:${sc ? Math.min(100, (sc / 1600) * 100) : 0}%"></i></div>
-            </div>`;
-          })
-          .join("")}
-      </div>
       ${deepCard}
     </div>
     <div class="stack">${hwCard}${whyCard}</div>
@@ -477,23 +426,27 @@ function resultView() {
     </div>
 
     <div class="card">
-      <div class="hero">
-        <div class="hero-main">
-          <div class="row" style="gap:12px">
-            <div class="score-num">${num(s.composite)}<small>综合分</small></div>
-            ${gradeBadge(r.grade?.grade || "D", r.grade?.label)}
-            ${r.scores.partial ? `<span class="pill warn">部分项缺失</span>` : ""}
-            ${r.submitted ? `<span class="pill good">已上天梯</span>` : ""}
-          </div>
-          <div class="score-sub">${esc(r.grade?.hint || "")}</div>
-          <div class="row" style="margin-top:16px;gap:8px;flex-wrap:wrap">
-            <button class="btn primary" data-action="submit-result" data-id="${esc(r.id)}">提交到天梯</button>
-            <a class="btn" href="/api/results/${esc(r.id)}/report.md" target="_blank" rel="noreferrer">Markdown 报告</a>
-            <button class="btn ghost" data-action="copy-card" data-id="${esc(r.id)}">复制成绩卡</button>
-            <a class="btn ghost" href="/api/results/${esc(r.id)}/export.json">导出 JSON</a>
-          </div>
+      <div class="card-head">
+        <h2>性能报告</h2>
+        <span class="sub">${new Date(r.ts).toLocaleString("zh-CN", { hour12: false })}</span>
+        <span class="spacer"></span>
+        ${gradeBadge(r.grade?.grade || "D")}
+        ${r.submitted ? `<span class="pill good">已提交</span>` : ""}
+        ${r.scores.partial ? `<span class="pill warn">部分项缺失</span>` : ""}
+      </div>
+      <div class="score-row">
+        <div class="score-num">${num(s.composite)}<small>综合分</small></div>
+        <div class="score-meta">
+          <span class="score-sub">CPU ${num(s.dims?.cpu?.score)} · 内存 ${num(s.dims?.memory?.score)} · 存储 ${num(s.dims?.storage?.score)}</span>
+          <span class="faint" style="font-size:11.5px">套件 v${esc(r.suite)} · 基准 1,000 = ${esc(state.boot?.baseline?.machine?.cpu_model || "参考机")}</span>
         </div>
-        ${gaugeSvg(s.composite)}
+        <span class="spacer"></span>
+        <div class="row" style="flex-wrap:wrap">
+          <button class="btn primary" data-action="submit-result" data-id="${esc(r.id)}">提交到天梯</button>
+          <a class="btn" href="/api/results/${esc(r.id)}/report.md" target="_blank" rel="noreferrer">Markdown</a>
+          <button class="btn ghost" data-action="copy-card" data-id="${esc(r.id)}">复制成绩卡</button>
+          <a class="btn ghost" href="/api/results/${esc(r.id)}/export.json">JSON</a>
+        </div>
       </div>
       <div class="divider"></div>
       ${dims.map(([k, d]) => dimBlock(k, d, s.dims?.[k])).join("")}
@@ -528,7 +481,7 @@ function resultView() {
         <dl class="kv">
           <dt>CPU</dt><dd>${esc(r.hardware.cpu_model)}</dd>
           <dt>核心</dt><dd>${r.hardware.cores} 核 / ${r.hardware.threads} 线程</dd>
-          <dt>内存</dt><dd>${r.hardware.mem_gb} GB</dd>
+          <dt>内存</dt><dd>${r.hardware.mem_gb} GB${r.hardware.mem_gib ? ` <span class="faint">（可见 ${r.hardware.mem_gib} GiB）</span>` : ""}</dd>
           <dt>整机</dt><dd>${esc(r.hardware.board || "—")}</dd>
           <dt>显卡</dt><dd>${esc(r.hardware.gpu || "—")}</dd>
           <dt>系统</dt><dd>fnOS ${esc(r.hardware.os_version)} · ${esc(r.hardware.kernel)}</dd>

@@ -1,0 +1,35 @@
+# 一条命令起「牛刀天梯」+ 自动 HTTPS（Caddy）。
+#   SITE_DOMAIN=lb.example.com LB_ADMIN_TOKEN=xxxx docker compose up -d
+# 记得把域名 A/AAAA 记录指到这台机器，并放行 80/443。
+services:
+  lb:
+    build:
+      context: ..
+      dockerfile: leaderboard/Dockerfile
+    restart: unless-stopped
+    environment:
+      LB_PORT: "8790"
+      LB_DATA: /data
+      LB_ADMIN_TOKEN: ${LB_ADMIN_TOKEN:-}
+    volumes:
+      - lb-data:/data
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      - lb
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      SITE_DOMAIN: ${SITE_DOMAIN:-localhost}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+
+volumes:
+  lb-data:
+  caddy-data:
+  caddy-config:

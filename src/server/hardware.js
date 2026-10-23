@@ -178,6 +178,15 @@ function machineId() {
   return id || os.hostname();
 }
 
+/** 常见内存规格（GiB）。可见容量比标称小一点是正常的（集显/固件预留）。 */
+const MEM_STEPS = [4, 8, 12, 16, 24, 32, 48, 64, 96, 128, 192, 256, 384, 512, 768, 1024];
+
+export function nominalCapacityGib(visibleGib) {
+  if (!Number.isFinite(visibleGib) || visibleGib <= 0) return 1;
+  const hit = MEM_STEPS.find((n) => n >= visibleGib && n - visibleGib <= Math.max(1, n * 0.08));
+  return hit ?? Math.round(visibleGib);
+}
+
 export function fingerprintOf(payload) {
   return createHash("sha256").update(JSON.stringify(payload)).digest("hex").slice(0, 24);
 }
@@ -188,7 +197,11 @@ export function fingerprintOf(payload) {
 export function snapshot(opts = {}) {
   const cpu = cpuInfo();
   const warnings = [...cpu.warnings];
-  const memGb = Math.max(1, Math.round(os.totalmem() / 1024 ** 3));
+  // 内存：系统只报"可用"容量（集显/固件会预留一部分），用户认知是"标称容量"。
+  // 所以两个都给：mem_gib = 系统可见（精确），mem_gb = 标称容量（就近取整到常见规格）。
+  const memBytes = os.totalmem();
+  const memGib = Math.round((memBytes / 1024 ** 3) * 10) / 10;
+  const memGb = nominalCapacityGib(memGib);
   const vols = volumes();
   const target = opts.targetDir || process.cwd();
   let volume = "";
@@ -204,6 +217,7 @@ export function snapshot(opts = {}) {
     cores: cpu.cores,
     threads: cpu.threads,
     mem_gb: memGb,
+    mem_gib: memGib,
     os_version: osVersion(),
     kernel: os.release(),
     board: board(),

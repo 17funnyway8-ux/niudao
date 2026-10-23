@@ -383,7 +383,10 @@ async function handleApi(req, res, url) {
       metrics: METRICS,
       deepLimits: DEEP_LIMITS,
       lastDeep: listResults(60).find((r) => r.kind === "deep") || null,
-      localRank: listResults(1)[0] ? localRank(listResults(1)[0].composite) : null,
+      localRank: (() => {
+        const latestFast = listResults(20).find((r) => r.kind !== "deep");
+        return latestFast ? localRank(latestFast.composite) : null;
+      })(),
     });
   }
 

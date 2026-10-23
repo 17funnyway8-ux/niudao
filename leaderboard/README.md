@@ -2,6 +2,55 @@
 
 零依赖（Node ≥ 18，实测 22），一个进程 + 一个 JSONL 文件就是全部。
 
+## 公网发布（"大家都能看到"的那一步）
+
+榜单要给别人看，必须有三样东西：**一个公网地址**、**HTTPS**、**7×24 在跑**。
+下面三条路，按"你有多少资源"从上到下选。
+
+### 路 A：Cloudflare Tunnel（推荐给家用 NAS，不用公网 IP、不用开端口）
+
+```bash
+# NAS 上装 cloudflared，把本地 8790 映射到你的域名
+cloudflared tunnel login
+cloudflared tunnel create niudao-lb
+cloudflared tunnel route dns niudao-lb lb.example.com
+cloudflared tunnel run --url http://127.0.0.1:8790 niudao-lb
+```
+
+- 不需要公网 IP、不需要路由器端口映射、证书由 Cloudflare 负责；
+- 应用设置里填 `https://lb.example.com`；
+- 想让服务开机自启：`sudo cloudflared service install`。
+
+### 路 B：自己的域名 + 反代（有公网 IP 或已经做了 DDNS）
+
+用仓库里的 compose 一把起（含 Caddy，自动申请证书）：
+
+```bash
+cd leaderboard
+SITE_DOMAIN=lb.example.com LB_ADMIN_TOKEN='换成随机串' docker compose up -d
+```
+
+或者不用 Docker，用 systemd + 现有 nginx/Caddy，见下面"systemd"与"反代"两节。
+
+### 路 C：租一台最小 VPS（最省心，但要花钱）
+
+1 核 1G 的机器足够（服务是 Node 单进程 + JSONL）。
+把仓库 `leaderboard/` 与 `src/shared/` 拷上去，`node leaderboard/server.js --port 8790`，前面挂 Caddy 即可。
+需要接受别人提交分数时，注意在 VPS 防火墙只放 80/443。
+
+### 无论走哪条，这三件事必须做
+
+| 事项 | 做法 |
+|---|---|
+| 删除脏数据 | 启动时设 `LB_ADMIN_TOKEN`，用 `DELETE /api/v1/entry/<id>` + `Authorization: Bearer` |
+| 备份 | 数据只有一个文件：`/data/submissions.jsonl`，每天 `cp` 一次到别的盘即可 |
+| 监控 | 把 `GET /api/v1/health` 挂到任意 uptime 监控（Uptime Kuma 也行），或给容器加 `HEALTHCHECK`（镜像已内置） |
+
+### 公开只读接口
+
+`GET /api/v1/leaderboard?dim=overall&arch=x64&limit=100` 带 `Access-Control-Allow-Origin: *`，
+所以论坛、静态站、别人的页面都能直接拉数据做自己的排行榜视图，不需要再写服务端。
+
 ## 最快启动
 
 ```bash
