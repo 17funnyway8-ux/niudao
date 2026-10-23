@@ -3,7 +3,33 @@
 和自托管版（`leaderboard/server.js`）**同一套 HTTP 契约**，客户端只改一个地址就能切过来。
 好处：没有服务器要养、不会休眠、免费额度足够（Workers 10 万请求/天，D1 5 GB / 每天 500 万行读）。
 
-## 部署（一次性，约 5 分钟）
+## 部署（一次性，约 2 分钟）
+
+### 方式一：API Token（推荐，适合远程/容器/CI）
+
+```bash
+# 1. 建 token：https://dash.cloudflare.com/profile/api-tokens → Create Token → Custom
+#    Permissions 三行：
+#      Account · Workers Scripts · Edit
+#      Account · D1 · Edit
+#      Account · Account Settings · Read
+# 2. 一条命令部署（会自动建 D1、建表、部署）
+CLOUDFLARE_API_TOKEN=xxx ADMIN_TOKEN=随便一串 ./worker/deploy.sh
+```
+
+### 方式二：OAuth 登录（只能在本机浏览器可用的环境）
+
+注意：Cloudflare 的 OAuth 回调**写死为 `http://localhost:8976/oauth/callback`**，
+所以在服务器/容器里跑 `wrangler login` 需要你本机做端口转发：
+
+```bash
+ssh -L 8976:127.0.0.1:8976 <这台机器>     # 另开一个终端保持连接
+npx wrangler login                        # 把它打印的链接在本机浏览器打开
+```
+
+（`--device` 设备码模式当前被 Cloudflare 拒绝，返回 403，不用试。）
+
+### 方式三：手动分步
 
 ```bash
 cd worker

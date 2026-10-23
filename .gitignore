@@ -18,3 +18,6 @@ __pycache__/
 # Worker 构建产物
 .wrangler/
 worker/.wrangler/
+
+# 本地凭据
+.env
