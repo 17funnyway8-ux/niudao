@@ -611,7 +611,13 @@ function boardView() {
   return `<div class="stack">
     <div class="card">
       <div class="card-head"><h2>天梯</h2>
-        <span class="sub">${data?.mode === "remote" ? "社区榜单" : "本机成绩"}</span>
+        <span class="sub">${
+          data?.mode === "remote"
+            ? state.boot?.leaderboard?.official
+              ? "官方榜"
+              : "自建榜单"
+            : "本机成绩"
+        }</span>
         <span class="spacer"></span>
         ${data?.total ? `<span class="pill">${num(data.total)} 台机器</span>` : ""}
       </div>
@@ -672,7 +678,7 @@ function settingsView() {
       <div class="field">
         <label>排行榜地址</label>
         <input type="url" id="f-leaderboardUrl" placeholder="http://192.168.1.10:8790" value="${esc(s.leaderboardUrl || "")}" />
-        <span class="hint">留空 = 只用本地成绩单。填好后点下面「测试连接」。</span>
+        <span class="hint">默认是随包内置的官方榜（${esc(state.boot?.leaderboard?.officialUrl || "")}）。填自己的地址可覆盖，清空则只用本地成绩单。</span>
       </div>
       <div class="field">
         <label>花名（榜单显示名）</label>

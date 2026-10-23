@@ -2,6 +2,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { OFFICIAL_LEADERBOARD } from "../shared/endpoints.js";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 export const APP_ROOT = path.resolve(HERE, "..", ".."); // 开发时=项目根，打包后=app/server
@@ -18,7 +19,8 @@ export const PATHS = {
 
 export const DEFAULT_SETTINGS = {
   alias: "",
-  leaderboardUrl: "",
+  // 打包内置的公共榜单；用户可改成自建地址，或清空只用本地成绩
+  leaderboardUrl: OFFICIAL_LEADERBOARD,
   leaderboardToken: "",
   autoSubmit: false,
   diskSizeMb: 512,

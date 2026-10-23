@@ -18,6 +18,7 @@ import { buildCard, buildMarkdown } from "./report.js";
 import { PATHS, loadBaselines, loadSettings, saveSettings, TARGET_DIR, ensureDataDir } from "./settings.js";
 import * as remote from "./remote.js";
 import { CLIENT_VERSION, DIMENSIONS, METRICS, SUITE_VERSION, computeScores, gradeOf } from "../shared/scoring.js";
+import { OFFICIAL_LEADERBOARD, isOfficial } from "../shared/endpoints.js";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const WEB_DIR = [path.join(HERE, "web"), path.resolve(HERE, "..", "web")].find((p) => fs.existsSync(p)) || path.join(HERE, "web");
@@ -375,7 +376,7 @@ async function handleApi(req, res, url) {
       baseline: { suite: baseline.suite, machine: baseline.machine, measured_at: baseline.measured_at, note: baseline.note },
       settings: loadSettings(),
       hardware: hardware(),
-      leaderboard: lb,
+      leaderboard: { ...lb, official: isOfficial(loadSettings().leaderboardUrl), officialUrl: OFFICIAL_LEADERBOARD },
       history: listResults(30),
       run: state,
       stages: STAGES,

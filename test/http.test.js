@@ -64,7 +64,10 @@ test("bootstrap 带回硬件、维度、指标定义", async () => {
   assert.ok(r.body.hardware.hardware.cpu_model);
   assert.ok(Object.keys(r.body.dimensions).includes("storage"));
   assert.ok(Object.keys(r.body.metrics).includes("disk_rand_read"));
-  assert.equal(r.body.leaderboard.configured, false);
+  // 打包后默认指向内置官方榜
+  assert.equal(r.body.leaderboard.configured, true);
+  assert.equal(r.body.leaderboard.official, true);
+  assert.match(r.body.leaderboard.officialUrl, /^https:\/\//);
 });
 
 test("首页静态文件可访问（单页回落）", async () => {
@@ -77,6 +80,7 @@ test("首页静态文件可访问（单页回落）", async () => {
 });
 
 test("未配置排行榜时，天梯接口降级为本地成绩", async () => {
+  await post("/api/settings", { leaderboardUrl: "" }); // 清空 = 只用本地成绩
   appendResult(fakeResult(1));
   appendResult(fakeResult(1.2));
   const r = await get("/api/leaderboard?dim=overall");
