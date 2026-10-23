@@ -867,13 +867,15 @@ function pollRun() {
   }, 900);
 }
 
-async function loadBoard() {
+async function loadBoard({ force = false } = {}) {
   state.board.loading = true;
   state.board.error = null;
   render();
   try {
     const q = new URLSearchParams({ dim: state.board.dim, limit: "50" });
     if (state.board.arch) q.set("arch", state.board.arch);
+    // 服务端有 30 秒新鲜期缓存（省掉一次 CF 握手）：手动刷新要绕过它
+    if (force) q.set("refresh", "1");
     state.board.data = await api(`/api/leaderboard?${q}`);
   } catch (e) {
     state.board.error = e.message;
@@ -942,7 +944,7 @@ document.addEventListener("click", async (ev) => {
     state.board.dim = el.dataset.dim;
     return loadBoard();
   }
-  if (action === "board-refresh") return loadBoard();
+  if (action === "board-refresh") return loadBoard({ force: true });
   if (action === "submit-result") {
     try {
       const out = await api(`/api/results/${id}/submit`, { method: "POST", body: JSON.stringify({}) });

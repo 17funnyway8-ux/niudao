@@ -14,6 +14,10 @@ export const PATHS = {
   target: TARGET_DIR,
   history: path.join(DATA_DIR, "results.jsonl"),
   settings: path.join(DATA_DIR, "settings.json"),
+  // 最后一次成功拉到的榜单：冷启动先拿它铺屏，再后台更新（CF 链路首次握手可能要几秒）
+  boardCache: path.join(DATA_DIR, "board-cache.json"),
+  // 优选出来的 CF 边缘 IP（重启不用重探）
+  edge: path.join(DATA_DIR, "cf-edge.json"),
   baselines: path.join(HERE, "data", "baselines.json"),
 };
 

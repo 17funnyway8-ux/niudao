@@ -227,6 +227,8 @@ async function startRun(body = {}) {
         try {
           await remote.submit(result, settings.alias);
           updateResult(result.id, { submitted: true, submittedAt: Date.now() });
+          boardCache.clear(); // 自己刚交的成绩要能立刻看到
+
         } catch (e) {
           state.events.push({ at: Date.now(), type: "submit-error", message: String(e.message || e) });
         }
@@ -342,8 +344,92 @@ async function startDeep(body = {}) {
 
 // 榜单纯读缓存：CF 这条链路偶尔要几秒，短时间内重复看榜不该每次都等网络
 const boardCache = new Map(); // key -> { at, data }
-const BOARD_TTL_MS = 30_000;
-const BOARD_STALE_MS = 10 * 60_000;
+const BOARD_TTL_MS = 30_000; // 新鲜期内切页面直接用，不劳烦网络（刷新按钮传 refresh=1 绕过）
+const BOARD_STALE_MS = 7 * 24 * 3600_000; // 连不上时可以退到磁盘缓存，但要老实说是哪天抓的
+const BOARD_FAILED_MS = 5 * 60_000; // 后台更新失败后，多久之内要老实告诉用户"这是旧数据"
+
+/** 拿本机最近一次快速档成绩，用于榜单里的「我排第几」。深度档没有综合分，跳过。 */
+function myBoardScore(dim) {
+  const latest = getResult(state.resultId) || listResults(20).find((r) => r.kind !== "deep") || null;
+  if (!latest) return null;
+  return dim === "overall"
+    ? latest.scores?.composite ?? latest.composite ?? null
+    : latest.scores?.dims?.[dim]?.score ?? latest.dims?.[dim]?.score ?? null;
+}
+
+// /api/bootstrap 每次页面加载都会调：不能让它同步等一次 CF 往返。
+// 这里只存后台保活刷出来的结果，前端拿到的永远是缓存。
+let edgeHealthCache = { at: 0, value: null };
+function refreshEdgeHealth() {
+  if (!remote.isConfigured()) {
+    edgeHealthCache = { at: Date.now(), value: { configured: false } };
+    return;
+  }
+  remote
+    .health()
+    .then((value) => {
+      edgeHealthCache = { at: Date.now(), value };
+    })
+    .catch(() => {});
+}
+
+const boardRefreshInFlight = new Set();
+/** 后台偷偷把榜单拉新（stale-while-revalidate）。失败只记在缓存条目上，不打扰用户。 */
+function kickBoardRefresh(cacheKey, params) {
+  if (boardRefreshInFlight.has(cacheKey)) return;
+  boardRefreshInFlight.add(cacheKey);
+  remote
+    .leaderboard(params)
+    .then((data) => {
+      boardCache.set(cacheKey, { at: Date.now(), data });
+      persistBoardCache();
+    })
+    .catch((err) => {
+      const cur = boardCache.get(cacheKey);
+      if (cur) {
+        cur.failedAt = Date.now();
+        cur.lastError = String(err?.message || err);
+      }
+    })
+    .finally(() => boardRefreshInFlight.delete(cacheKey));
+}
+
+/** 冷启动先把上次的榜单读回内存：CF 链路首次握手可能要几秒，别让用户对着空屏等。 */
+function hydrateBoardCache() {
+  try {
+    const raw = JSON.parse(fs.readFileSync(PATHS.boardCache, "utf8"));
+    for (const [key, entry] of Object.entries(raw || {})) {
+      if (entry && Number.isFinite(entry.at) && entry.data) boardCache.set(key, entry);
+    }
+  } catch {
+    /* 没缓存或格式坏了都无所谓 */
+  }
+}
+
+let boardSaveTimer = null;
+function persistBoardCache() {
+  clearTimeout(boardSaveTimer);
+  boardSaveTimer = setTimeout(() => {
+    try {
+      ensureDataDir();
+      const dump = {};
+      for (const [key, entry] of boardCache) dump[key] = entry;
+      const tmp = `${PATHS.boardCache}.tmp`;
+      fs.writeFileSync(tmp, JSON.stringify(dump));
+      fs.renameSync(tmp, PATHS.boardCache);
+    } catch (err) {
+      log.warn("board_cache_save_failed", { message: String(err?.message || err) });
+    }
+  }, 200);
+  boardSaveTimer.unref?.();
+}
+
+function humanAge(sec) {
+  if (sec < 90) return `${Math.round(sec)} 秒`;
+  if (sec < 5400) return `${Math.round(sec / 60)} 分钟`;
+  if (sec < 172800) return `${Math.round(sec / 3600)} 小时`;
+  return `${Math.round(sec / 86400)} 天`;
+}
 
 async function handleApi(req, res, url) {
   const { pathname } = url;
@@ -374,14 +460,16 @@ async function handleApi(req, res, url) {
 
   if (pathname === "/api/bootstrap") {
     const baseline = loadBaselines();
-    const lb = await remote.health();
+    // 用后台保活刷出来的那份，不再为了一次健康检查阻塞整页
+    const lb = edgeHealthCache.value || { configured: remote.isConfigured(), ok: null, pending: true };
+    if (Date.now() - edgeHealthCache.at > 60_000) refreshEdgeHealth();
     return json(res, 200, {
       suite: SUITE_VERSION,
       client: CLIENT_VERSION,
       baseline: { suite: baseline.suite, machine: baseline.machine, measured_at: baseline.measured_at, note: baseline.note },
       settings: loadSettings(),
       hardware: hardware(),
-      leaderboard: { ...lb, official: isOfficial(loadSettings().leaderboardUrl), officialUrl: OFFICIAL_LEADERBOARD },
+      leaderboard: { ...lb, official: isOfficial(loadSettings().leaderboardUrl), officialUrl: OFFICIAL_LEADERBOARD, edgeIp: remote.pinnedEdge() },
       history: listResults(30),
       run: state,
       stages: STAGES,
@@ -508,6 +596,8 @@ async function handleApi(req, res, url) {
       try {
         const out = await remote.submit(result, body.alias);
         updateResult(id, { submitted: true, submittedAt: Date.now() });
+        boardCache.clear(); // 名次变了，下次看榜必须重新拉
+
         return json(res, 200, out);
       } catch (e) {
         const msg = String(e.message || e);
@@ -531,29 +621,48 @@ async function handleApi(req, res, url) {
       });
     }
     const cacheKey = `${dim}|${arch}|${limit}`;
+    const force = ["1", "true"].includes(String(url.searchParams.get("refresh") || ""));
+    const params = { dim, arch, limit, score: myBoardScore(dim) };
+    const hit = boardCache.get(cacheKey);
+
+    // 有缓存就先用缓存铺屏，后台再更新：CF 那条链路好坏看运气，
+    // 让用户对着「载入中」等网络是没道理的。刷新按钮（refresh=1）才阻塞等待。
+    if (!force && hit) {
+      const ageMs = Date.now() - hit.at;
+      if (ageMs >= BOARD_TTL_MS) kickBoardRefresh(cacheKey, params);
+      const ageSec = Math.round(ageMs / 1000);
+      const broken = hit.failedAt && Date.now() - hit.failedAt < BOARD_FAILED_MS;
+      return json(res, 200, {
+        mode: "remote",
+        ...hit.data,
+        cached: true,
+        ageSec,
+        revalidating: ageMs >= BOARD_TTL_MS,
+        ...(broken
+          ? {
+              stale: true,
+              warning: `排行榜暂时连不上（${hit.lastError || "网络不通"}），这是 ${humanAge(ageSec)}前的数据。体检与本地成绩不受影响。`,
+            }
+          : {}),
+      });
+    }
+
     try {
-      // 取最近一次「快速档」成绩来算"我排第几"（深度档没有综合分）
-      const latest =
-        getResult(state.resultId) ||
-        listResults(20).find((r) => r.kind !== "deep") ||
-        null;
-      const score = latest
-        ? dim === "overall"
-          ? latest.scores?.composite ?? latest.composite ?? null
-          : latest.scores?.dims?.[dim]?.score ?? latest.dims?.[dim]?.score ?? null
-        : null;
-      const data = await remote.leaderboard({ dim, arch, limit, score });
+      const data = await remote.leaderboard(params);
       boardCache.set(cacheKey, { at: Date.now(), data });
+      persistBoardCache();
       return json(res, 200, { mode: "remote", ...data });
     } catch (e) {
-      const hit = boardCache.get(cacheKey);
-      if (hit && Date.now() - hit.at < BOARD_STALE_MS) {
+      const old = boardCache.get(cacheKey);
+      if (old && Date.now() - old.at < BOARD_STALE_MS) {
+        const ageSec = Math.round((Date.now() - old.at) / 1000);
         return json(res, 200, {
           mode: "remote",
-          ...hit.data,
+          ...old.data,
+          cached: true,
           stale: true,
-          staleAgeSec: Math.round((Date.now() - hit.at) / 1000),
-          warning: `排行榜暂时连不上（${String(e.message || e)}），这是 ${Math.round((Date.now() - hit.at) / 1000)} 秒前的数据。`,
+          staleAgeSec: ageSec,
+          warning: `排行榜暂时连不上（${String(e.message || e)}），这是 ${humanAge(ageSec)}前的数据。体检与本地成绩不受影响。`,
         });
       }
       return json(res, 200, {
@@ -599,6 +708,7 @@ export async function shutdown({ timeoutMs = 8000 } = {}) {
     }
   }
   log.info("shutdown", { status: state.status, elapsedMs: Date.now() - started });
+  remote.shutdown(); // 拆掉 keepAlive 连接池，否则留着 socket 不退进程
   counter("niudao_shutdown_total", { status: state.status });
   return { status: state.status, elapsedMs: Date.now() - started };
 }
@@ -634,11 +744,32 @@ export function createServer() {
 export function start({ port = 0, socketPath = "" } = {}) {
   initLogger(PATHS.data);
 
-  // 预热榜单连接：国内到 Cloudflare 的首包握手偶发丢包，开机就先握一次手；
-  // 之后每 3 分钟再来一次，避免连接池彻底冷掉。
-  const warm = () => remote.health().catch(() => {});
-  warm();
-  setInterval(warm, 180_000).unref();
+  hydrateBoardCache();
+
+  // 启动顺序很重要：先优选 CF 边缘 IP，再预热榜单。
+  // DNS 给的那两个 IP 在国内这条线路上经常建连失败，换一个同属 CF 的 anycast IP
+  // 就能从 1/4 成功变成 4/4 —— 预热必须走优选的那条路，否则第一次抓榜就是白等。
+  const readyToFetch = remote.isConfigured()
+    ? remote
+        .selectEdge()
+        .then((pick) => {
+          if (pick) log.info("edge_selected", { ip: pick.ip, ms: pick.ms ?? null, cached: Boolean(pick.cached), ok: pick.ok ?? null });
+        })
+        .catch((err) => log.warn("edge_select_failed", { message: String(err?.message || err) }))
+    : Promise.resolve();
+
+  readyToFetch.finally(() => {
+    // 没有榜单缓存就先在后台抓一份：装上应用第一次点「天梯榜」不该对着转圈等
+    if (remote.isConfigured() && !boardCache.has("overall||50")) {
+      kickBoardRefresh("overall||50", { dim: "overall", arch: "", limit: 50, score: myBoardScore("overall") });
+    }
+  });
+
+  // 预热 + 保活榜单连接。国内到 Cloudflare 的握手是随机丢包的，
+  // 实测复用连接 ~400ms、新连接 0.3–15s；池子里 idle 超过 ~60s 就会退化成死连接，
+  // 所以 25 秒喂一次，让绝大多数用户请求都走热连接。
+  refreshEdgeHealth();
+  setInterval(refreshEdgeHealth, 25_000).unref();
   process.on("uncaughtException", (err) => {
     log.error("uncaught_exception", { message: String(err?.message || err), stack: String(err?.stack || "").slice(0, 800) });
     counter("niudao_process_errors_total", { kind: "uncaughtException" });

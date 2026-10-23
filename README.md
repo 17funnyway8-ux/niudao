@@ -101,6 +101,58 @@ node build.mjs --pack        # 组装运行时 + 包体检 + fnpack build → pa
 > 为什么不用 `*.workers.dev`：该域在国内网络被解析污染（返回 Dropbox 的 IP），必须挂自定义域名。
 > 绑自定义域名的命令：`curl -X PUT .../accounts/<id>/workers/domains -d '{"zone_id":"...","hostname":"fnbench.1133891.xyz","service":"niudao-lb","environment":"production"}'`
 
+## 国内访问 Cloudflare 这条链路（实测与对策）
+
+官方榜挂在 CF 免费套餐上。**一开始的判断是错的**：以为"国内到 CF 就是慢"。实测把它推翻了。
+
+同一条家宽、同一分钟、各 4 次：
+
+| 目标 | 成功 | 说明 |
+|---|---|---|
+| `www.baidu.com` | 4/4 | 宽带本身没问题 |
+| `www.cloudflare.com` | 4/4 | 到 CF 也没问题 |
+| `fnbench.1133891.xyz` | **1/4** | 只有我们这个域名不行 |
+
+差别在于 **DNS 给这个 zone 分配的那两个 anycast IP**（`104.21.41.26` / `172.67.159.18`）在这条线路上建连失败率极高。
+而 CF 的 anycast 有个特性：**任何 CF 边缘 IP 都能服务任何挂在 CF 上的站点**，只要 TLS SNI 和 HTTP Host 还是我们的域名。
+所以客户端自己挑一个走得通的 IP 就行 —— 这就是俗称的「CF 优选 IP」，证书照样校验、路由照样到我们的 Worker。
+
+换成 `104.17.128.1` 之后，同样的请求：
+
+| 场景 | 成功率 | p50 | p95 |
+|---|---|---|---|
+| DNS 给的 IP（`--mode=seq`） | 4/4 但抖动巨大 | **4132ms** | **16767ms** |
+| 钉 `104.17.128.1` + 旧策略 | 6/6 | **180ms** | 600ms |
+| 钉 `104.17.128.1` + 现策略 | 6/6 | **191ms** | 580ms |
+| 走应用自己的 30 秒新鲜期缓存 | 100% | **3ms** | — |
+
+于是客户端现在做四件事：
+
+1. **边缘 IP 优选**（`src/server/edge.js`）：启动时并发探测一小池 CF anycast IP（每个 2s），
+   谁先给出正确的 `/api/v1/health` 就钉谁（SNI/Host 不变，只换解析结果）；选择落盘到
+   `cf-edge.json`，重启不重探。连续 3 次网络失败会自动重探；换官方榜地址则旧选择作废。
+   **只对内置官方榜生效**，用户填的自建地址一律按 DNS 走。
+2. **长连接池**：`node:https` Agent + `keepAliveMsecs=30s`（undici 默认只有 4s），
+   正常情况一次看榜只花一个 RTT；另外每 25 秒喂一次 `/api/v1/health` 保活
+   （实测 idle 超过 ~60s 连接就退化成"半死"状态，请求会一直挂着）。
+3. **对冲重试（hedged）**：首条 1.5s 短超时，没回就**并发**再发一条，后续给 6s 让新握手有机会完成，
+   最多 3 条；谁先回用谁，其余立刻掐掉。业务错误（4xx/5xx）不重试。
+4. **缓存三段式**：内存 30 秒新鲜期 → 磁盘 `board-cache.json`（重启后仍能秒开）→
+   后台 stale-while-revalidate。**用户永远不用对着"载入中"等网络**；真连不上就退回旧数据，
+   并写清楚"这是多久前的数据"。开机还会在后台先抓一份，装上应用第一次点天梯榜就是秒开。
+
+自己验一遍：
+
+```bash
+npm run check:cf -- --mode=seq                    # 走 DNS + 旧策略（对照）
+npm run check:cf -- --ip=104.17.128.1             # 钉住优选 IP
+npm run check:cf -- --path=/api/v1/leaderboard?dim=overall
+```
+
+> 说明：优选 IP 是"用当下能通的边缘"。CF 的 anycast IP 会变、线路会变，
+> 所以代码里有自动重探；真要绝对稳，还是国内轻量 VPS 跑同款 `leaderboard/server.js`，
+> 改 `src/shared/endpoints.js` 一行指过去即可。
+
 ## 排行榜（自托管）
 
 应用离线也完整可用（本机成绩 + 报告 + 成绩卡）；想要跨机器排名，就把榜单服务跑起来：
@@ -128,6 +180,8 @@ node leaderboard/server.js --port 8790
 | 旧版成绩 | `<数据目录>/results.jsonl`（首次启动自动迁移为 `.migrated`） |
 | 结构化日志 | `<数据目录>/app.jsonl`（超过 2MB 轮转为 `.1`） |
 | 设置 | `<数据目录>/settings.json` |
+| 榜单缓存 | `<数据目录>/board-cache.json`（最后一次成功拉到的榜，冷启动用来铺屏） |
+| 优选边缘 IP | `<数据目录>/cf-edge.json`（删掉就会重新探测） |
 | 指标 | `GET /api/metrics` |
 
 安装后数据目录 = `/var/apps/niudao/var`。
@@ -136,12 +190,12 @@ node leaderboard/server.js --port 8790
 
 ```
 src/shared/       评分模型与提交校验（应用与榜单服务共用）
-src/server/       应用后端：bench 内核、编排、HTTP、本机存储、榜单客户端
+src/server/       应用后端：bench 内核、编排、HTTP、本机存储、榜单客户端（remote/edge）
 src/web/          前端（零框架、零依赖，纯 ES module）
 leaderboard/      自托管榜单服务（Node 标准库 + JSONL）
 package/          fnOS 应用包（manifest / config / cmd / wizard / app）
   app/runtime/    ← build.mjs 从 src/ 组装出来的运行时（不提交）
-scripts/          校准与图标生成
+scripts/          校准、图标生成、CF 通道体检（cf-check.mjs）
 test/             node:test 单测
 docs/             设计文档
 ```
