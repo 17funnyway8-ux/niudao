@@ -146,17 +146,26 @@ const server = http.createServer(async (req, res) => {
         });
       }
 
-      // 防刷分：同一台机器 12 小时内不重复接收，除非分数明显提升（>3%）
+      // 防刷分：同一台机器 12 小时内只接受一次写入；除非提升超过 3%。
+      // 没写进去时返回 kept=true（不是错误），客户端据此提示"保留原成绩"。
       const prevEntry = [...store.best.values()].find((e) => e.fingerprint === v.fingerprint && e.suite === v.suite);
       const scores = computeScores(v.metrics, baselines.metrics);
       if (prevEntry) {
         const elapsedH = (Date.now() - (prevEntry.receivedAt || prevEntry.ts || 0)) / 3600000;
-        const improved = scores.composite > prevEntry.scores.composite * 1.03;
-        if (elapsedH < 12 && !improved) {
-          return json(res, 429, {
-            error: `同一台机器 12 小时内只能提交一次（上次 ${elapsedH.toFixed(1)} 小时前）。要覆盖旧成绩，提升幅度需超过 3%。`,
+        const improvedEnough = scores.composite > prevEntry.scores.composite * 1.03;
+        if (elapsedH < 12 && !improvedEnough) {
+          const better = prevEntry.scores.composite;
+          return json(res, 200, {
+            ok: true,
+            kept: true,
+            improved: false,
+            composite: scores.composite,
+            previousBest: better,
             retryAfterH: Math.round((12 - elapsedH) * 10) / 10,
-            previousBest: prevEntry.scores.composite,
+            message:
+              scores.composite <= better
+                ? `本次 ${scores.composite} 分未超过已有最好成绩 ${better}，已保留原成绩。`
+                : `距上次提交 ${elapsedH.toFixed(1)} 小时，提升不足 3%，已保留原成绩（${better}）。`,
           });
         }
       }

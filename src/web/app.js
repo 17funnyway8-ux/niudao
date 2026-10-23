@@ -939,8 +939,9 @@ document.addEventListener("click", async (ev) => {
   if (action === "board-refresh") return loadBoard();
   if (action === "submit-result") {
     try {
-      await api(`/api/results/${id}/submit`, { method: "POST", body: JSON.stringify({}) });
-      toast("已提交到天梯", "ok");
+      const out = await api(`/api/results/${id}/submit`, { method: "POST", body: JSON.stringify({}) });
+      if (out?.kept) toast(out.message || "已保留原成绩", "");
+      else toast("已提交到天梯", "ok");
       state.result = await api(`/api/results/${id}`);
       await refreshBoot();
     } catch (e) {

@@ -67,6 +67,8 @@ npm run dev          # http://0.0.0.0:7788
 npm test             # 64 项单测：评分模型、校验、榜单门槛、HTTP、基准内核、稳定性分析、深度编排、存储层
 node scripts/calibrate.mjs   # 在你的机器上重新校准 1000 分基准（会重写 baselines.json）
 node scripts/check-deep.mjs  # 用极短时长跑一遍深度档（约 40 秒），验证温度采样链路
+npm run worker:assets        # 把榜单页 + 基准编译进 worker（改了 public/index.html 后必跑）
+npm run worker:dev           # 本地起 Cloudflare Worker（wrangler --local）
 ```
 
 ## 装到飞牛 fnOS
@@ -86,12 +88,18 @@ node build.mjs --pack        # 组装运行时 + 包体检 + fnpack build → pa
 安装后入口在桌面「牛刀」，实际访问路径 `/app/niudao`（统一网关，不占主机端口）。
 日志在应用数据目录：`/var/apps/niudao/var/app.log`。
 
-## 已经有一个公开实例
+## 两种榜单后端
 
+| 后端 | 地址 | 特点 |
+|---|---|---|
+| Cloudflare Workers + D1 | `worker/`（部署后形如 `https://niudao-lb.<子域>.workers.dev`） | **永久在线**、无服务器、免费额度足够；推荐 |
+| 自托管 Node + JSONL | `leaderboard/` | 数据在自己手里，适合内网/自有 VPS |
+
+两者 API 完全一致，客户端只改地址。当前内置的默认地址在 `src/shared/endpoints.js`，
+换地址改这一行 + 重新打包即可。
+
+临时演示实例（instabox 沙箱，会随沙箱休眠而离线）：
 https://8790-agqvosnubdwfqzie6uwxtp26fm.instabox.tech
-
-跑在一台 instabox 沙箱上（4 vCPU / 8 GiB），systemd 托管，数据落在 `/data/workspace/niudao-lb/data`。
-**注意**：该沙箱没有公网 IP，URL 由平台的端口映射转发，沙箱停止期间打不开；长期在线请按 `leaderboard/README.md` 换成 VPS / 反代 / Cloudflare Tunnel。
 
 ## 排行榜（自托管）
 

@@ -1,0 +1,12 @@
+name = "niudao-lb"
+main = "src/index.js"
+compatibility_date = "2025-06-01"
+
+# 本地/远端 D1。部署前把 database_id 换成 `wrangler d1 create niudao-lb` 输出的值。
+[[d1_databases]]
+binding = "DB"
+database_name = "niudao-lb"
+database_id = "00000000-0000-0000-0000-000000000000"
+
+[observability]
+enabled = true

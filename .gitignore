@@ -14,3 +14,7 @@ __pycache__/
 
 # 本地工具（fnpack 二进制）
 .tools/
+
+# Worker 构建产物
+.wrangler/
+worker/.wrangler/
