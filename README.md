@@ -86,6 +86,13 @@ node build.mjs --pack        # 组装运行时 + 包体检 + fnpack build → pa
 安装后入口在桌面「牛刀」，实际访问路径 `/app/niudao`（统一网关，不占主机端口）。
 日志在应用数据目录：`/var/apps/niudao/var/app.log`。
 
+## 已经有一个公开实例
+
+https://8790-agqvosnubdwfqzie6uwxtp26fm.instabox.tech
+
+跑在一台 instabox 沙箱上（4 vCPU / 8 GiB），systemd 托管，数据落在 `/data/workspace/niudao-lb/data`。
+**注意**：该沙箱没有公网 IP，URL 由平台的端口映射转发，沙箱停止期间打不开；长期在线请按 `leaderboard/README.md` 换成 VPS / 反代 / Cloudflare Tunnel。
+
 ## 排行榜（自托管）
 
 应用离线也完整可用（本机成绩 + 报告 + 成绩卡）；想要跨机器排名，就把榜单服务跑起来：

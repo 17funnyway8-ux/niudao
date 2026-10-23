@@ -2,6 +2,27 @@
 
 零依赖（Node ≥ 18，实测 22），一个进程 + 一个 JSONL 文件就是全部。
 
+## 当前实例（已在跑）
+
+| 项 | 值 |
+|---|---|
+| 公开地址 | https://8790-agqvosnubdwfqzie6uwxtp26fm.instabox.tech |
+| 主机 | instabox 沙箱（4 vCPU / 8 GiB / Debian 13，Firecracker VM） |
+| 进程 | systemd 单元 `niudao-lb`（开机自启，崩溃自动重启） |
+| 代码 | `/data/workspace/niudao-lb`（重启不丢） |
+| 数据 | `/data/workspace/niudao-lb/data/submissions.jsonl` |
+
+**这台机器没有公网 IP**：出入都走 instabox 的端口映射（`instabox-port publish 8790`）。
+代价是**沙箱不运行时 URL 就打不开**。要长期在线，见下面三条路里任选一条。
+
+重新部署（沙箱被重建后）：
+
+```bash
+tar czf - leaderboard/server.js leaderboard/store.js leaderboard/public leaderboard/baselines.json src/shared \
+  | ssh -p 2222 <user>@<host> 'mkdir -p /data/workspace/niudao-lb && tar xzf - -C /data/workspace/niudao-lb'
+ssh -p 2222 <user>@<host> 'sudo systemctl restart niudao-lb && instabox-port list'
+```
+
 ## 公网发布（"大家都能看到"的那一步）
 
 榜单要给别人看，必须有三样东西：**一个公网地址**、**HTTPS**、**7×24 在跑**。

@@ -10,7 +10,7 @@ import { createRequire } from "node:module";
 import { ensureDataDir, PATHS } from "./settings.js";
 
 const SUMMARY_FIELDS = `
-  id, ts, kind, suite, client, fingerprint, arch, composite,
+  id, ts, kind, suite, client, fingerprint, arch, cpu_model, mem_gb, composite,
   cpu, memory, storage, verdict, verdict_level, max_temp, submitted
 `;
 
@@ -50,6 +50,7 @@ function summaryFromRow(row) {
       : {},
     grade: row.composite ? gradeOfComposite(row.composite) : "",
     cpu_model: row.cpu_model ?? "",
+    mem_gb: row.mem_gb ?? null,
     arch: row.arch,
     submitted: Boolean(row.submitted),
     partial: false,
@@ -86,6 +87,8 @@ function createSqliteBackend(file) {
       client TEXT,
       fingerprint TEXT,
       arch TEXT,
+      cpu_model TEXT,
+      mem_gb INTEGER,
       composite REAL,
       cpu REAL,
       memory REAL,
@@ -102,10 +105,27 @@ function createSqliteBackend(file) {
     CREATE INDEX IF NOT EXISTS idx_results_fp ON results(fingerprint);
   `);
 
+  // 老数据回填：从 payload 里补出列表要用的字段
+  try {
+    db.exec("UPDATE results SET cpu_model = json_extract(payload, '$.hardware.cpu_model') WHERE cpu_model IS NULL");
+    db.exec("UPDATE results SET mem_gb = json_extract(payload, '$.hardware.mem_gb') WHERE mem_gb IS NULL");
+  } catch {
+    /* 旧版本 SQLite 没有 json 函数就跳过 */
+  }
+
+  // 老库补列（SQLite 没有 IF NOT EXISTS for column）
+  for (const col of ["cpu_model TEXT", "mem_gb INTEGER"]) {
+    try {
+      db.exec(`ALTER TABLE results ADD COLUMN ${col}`);
+    } catch {
+      /* 已存在 */
+    }
+  }
+
   const insert = db.prepare(`
-    INSERT INTO results (id, ts, kind, suite, client, fingerprint, arch, composite, cpu, memory, storage,
+    INSERT INTO results (id, ts, kind, suite, client, fingerprint, arch, cpu_model, mem_gb, composite, cpu, memory, storage,
                          verdict, verdict_level, max_temp, submitted, payload)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET submitted = excluded.submitted, payload = excluded.payload
   `);
 
@@ -117,6 +137,8 @@ function createSqliteBackend(file) {
     r.client ?? null,
     r.fingerprint ?? null,
     r.arch ?? null,
+    r.hardware?.cpu_model ?? null,
+    r.hardware?.mem_gb ?? null,
     r.scores?.composite ?? null,
     r.scores?.dims?.cpu?.score ?? null,
     r.scores?.dims?.memory?.score ?? null,
