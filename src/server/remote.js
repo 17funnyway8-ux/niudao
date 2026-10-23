@@ -4,8 +4,8 @@ import { loadSettings } from "./settings.js";
 
 // 国内家宽到 Cloudflare 免费边缘的 TLS 握手偶有丢包（实测首包 2–8s），
 // 所以：单次 6 秒超时 + 最多重试 2 次；连接会被 undici 复用，重试通常很快。
-const TIMEOUT = 6000;
-const ATTEMPTS = 2;
+const TIMEOUT = 5000;
+const ATTEMPTS = 3;
 
 function baseUrl() {
   const { leaderboardUrl } = loadSettings();

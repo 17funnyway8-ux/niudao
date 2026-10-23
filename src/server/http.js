@@ -556,7 +556,20 @@ async function handleApi(req, res, url) {
           warning: `排行榜暂时连不上（${String(e.message || e)}），这是 ${Math.round((Date.now() - hit.at) / 1000)} 秒前的数据。`,
         });
       }
-      return json(res, 502, { error: String(e.message || e) });
+      return json(res, 200, {
+        mode: "remote",
+        dim,
+        arch: arch || null,
+        total: 0,
+        offset: 0,
+        limit,
+        entries: [],
+        me: null,
+        buckets: {},
+        stats: null,
+        unavailable: true,
+        warning: `排行榜暂时连不上（${String(e.message || e)}）。检查网络后点「刷新」；体检与本地成绩不受影响。`,
+      });
     }
   }
 
@@ -620,6 +633,12 @@ export function createServer() {
 
 export function start({ port = 0, socketPath = "" } = {}) {
   initLogger(PATHS.data);
+
+  // 预热榜单连接：国内到 Cloudflare 的首包握手偶发丢包，开机就先握一次手；
+  // 之后每 3 分钟再来一次，避免连接池彻底冷掉。
+  const warm = () => remote.health().catch(() => {});
+  warm();
+  setInterval(warm, 180_000).unref();
   process.on("uncaughtException", (err) => {
     log.error("uncaught_exception", { message: String(err?.message || err), stack: String(err?.stack || "").slice(0, 800) });
     counter("niudao_process_errors_total", { kind: "uncaughtException" });
