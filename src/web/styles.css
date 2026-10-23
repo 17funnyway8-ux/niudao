@@ -337,3 +337,92 @@ input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--lime); }
   .tab { padding: 6px 11px; font-size: 13px; }
   .truncate { max-width: 180px; }
 }
+
+/* ---------- 语义色（状态）---------- */
+:root {
+  --good: #a8e04a;
+  --warn: #ffb545;
+  --bad: #ff6b5e;
+}
+
+/* ---------- 统计块 ---------- */
+.stat { padding: 8px 0; border-bottom: 1px dashed var(--line-soft); }
+.stat:last-child { border-bottom: 0; }
+.stat-label { font-size: 11.5px; color: var(--faint); letter-spacing: 0.04em; }
+.stat-value { font-family: var(--mono); font-size: 21px; font-variant-numeric: tabular-nums; margin-top: 2px; }
+.stat-hint { font-size: 11px; color: var(--faint); margin-top: 2px; }
+
+/* ---------- 图表 ---------- */
+.chart { position: relative; margin-top: 6px; }
+.chart svg { width: 100%; height: auto; display: block; overflow: visible; }
+.chart-grid { stroke: var(--line-soft); stroke-width: 1; }
+.chart-axis { fill: var(--faint); font-size: 10px; font-family: var(--mono); }
+.chart-threshold { stroke: rgba(255, 107, 94, 0.55); stroke-width: 1; stroke-dasharray: 4 4; }
+.chart-threshold-label { fill: rgba(255, 107, 94, 0.85); font-size: 10px; font-family: var(--mono); }
+.chart-cursor-line { stroke: var(--muted); stroke-width: 1; stroke-dasharray: 3 3; }
+.chart-tip {
+  position: absolute; top: 4px; pointer-events: none;
+  background: var(--panel-2); border: 1px solid var(--line);
+  border-radius: 7px; padding: 3px 8px; font-family: var(--mono);
+  font-size: 11.5px; color: var(--text); white-space: nowrap;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+}
+.chart-empty { padding: 18px; text-align: center; color: var(--faint); font-size: 12.5px; }
+
+/* ---------- 逐轮柱 ---------- */
+.rounds { display: flex; align-items: flex-end; gap: 3px; height: 72px; margin-top: 8px; }
+.round-col { flex: 1; min-width: 3px; height: 100%; display: flex; align-items: flex-end; }
+.round-col > i {
+  display: block; width: 100%; border-radius: 3px 3px 1px 1px;
+  background: linear-gradient(180deg, #2d4453, #1a2530);
+  transition: background 0.15s;
+}
+.round-col > i.best { background: linear-gradient(180deg, var(--good), #6cae2c); }
+.round-col > i.worst { background: linear-gradient(180deg, var(--bad), #b03a31); }
+.round-col:hover > i { filter: brightness(1.25); }
+
+/* ---------- 主题切换按钮 ---------- */
+.icon-btn {
+  border: 1px solid var(--line); background: var(--panel); border-radius: 9px;
+  width: 32px; height: 32px; display: inline-flex; align-items: center; justify-content: center;
+  color: var(--muted);
+}
+.icon-btn:hover { color: var(--text); border-color: #2f4557; }
+
+/* ---------- 可达性 ---------- */
+:focus-visible { outline: 2px solid var(--lime); outline-offset: 2px; border-radius: 6px; }
+@media (prefers-reduced-motion: reduce) {
+  * { animation-duration: 0.001ms !important; transition-duration: 0.001ms !important; }
+}
+
+/* ---------- 亮色主题（跟随 fnOS 桌面）---------- */
+:root[data-theme="light"] {
+  --bg: #f6f8fa;
+  --bg-soft: #ffffff;
+  --panel: #ffffff;
+  --panel-2: #f1f4f7;
+  --line: #d8e0e8;
+  --line-soft: #e8eef4;
+  --text: #16202b;
+  --muted: #5b6b7a;
+  --faint: #8496a6;
+  --lime: #7cb300;
+  --good: #4e8f00;
+  --warn: #b87300;
+  --bad: #c8382c;
+  --blue: #1c7fc4;
+  --violet: #6b4fd0;
+}
+:root[data-theme="light"] body {
+  background-image:
+    radial-gradient(900px 500px at 12% -10%, rgba(124, 179, 0, 0.10), transparent 60%),
+    radial-gradient(700px 420px at 92% 0%, rgba(28, 127, 196, 0.08), transparent 60%);
+}
+:root[data-theme="light"] .topbar { background: rgba(255, 255, 255, 0.86); }
+:root[data-theme="light"] .tab.is-active { color: #fff; background: var(--lime); border-color: var(--lime); }
+:root[data-theme="light"] .btn.primary { color: #fff; background: var(--lime); border-color: var(--lime); }
+:root[data-theme="light"] .score-num,
+:root[data-theme="light"] .stat-value { color: #16202b; }
+:root[data-theme="light"] .round-col > i { background: linear-gradient(180deg, #cfdae4, #e6edf3); }
+:root[data-theme="light"] .chart-tip { box-shadow: 0 6px 18px rgba(20, 35, 50, 0.12); }
+:root[data-theme="light"] input { background: #fff; }

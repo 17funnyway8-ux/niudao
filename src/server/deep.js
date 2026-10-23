@@ -6,6 +6,7 @@ import { cpuMulti } from "./bench/cpu.js";
 import { startBurn, startDiskChurn } from "./bench/burn.js";
 import { prepareDir } from "./bench/disk.js";
 import { startSampler } from "./bench/thermal.js";
+import { OPS_PER_ITER } from "./bench/kernel.js";
 import { analyzeStability, downsample } from "../shared/stability.js";
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -102,10 +103,34 @@ export async function runDeep({
   const capabilities = sampler.capabilities();
 
   emit({ type: "phase", phase: "burn", label: `满载烤机 ${duration < 90 ? `${duration} 秒` : `${Math.round(duration / 60)} 分钟`}`, durationSec: duration, loadDisk });
-  const burn = startBurn({ chunkMs: 500, onProgress: () => {} });
-  const churn = loadDisk ? startDiskChurn(targetDir, { sizeMb: 256 }) : null;
 
+  // 逐轮吞吐：每 probeSec 记录一次累计迭代数，delta 即该轮的实际算力。
+  // 这就是 3DMark 压力测试里"每一 loop 的平均帧率"，用来算稳定性 = 最差轮/最好轮。
+  const probeSec = Math.max(5, Math.min(30, Math.round(duration / 12)));
+  // 预热窗口：worker 启动 + JIT 编译 + 风扇提速都在前十几秒，这段时间的吞吐不代表稳态，
+  // 直接算进稳定性会得出"散热吃紧"的假结论。跳过它再开始记轮次。
+  const warmupSec = Math.min(30, Math.max(8, Math.round(duration * 0.15)));
+  const roundsSeries = [];
+  let lastProbe = null;
   const burnStart = Date.now();
+
+  const burn = startBurn({
+    chunkMs: 500,
+    onProgress: ({ iters }) => {
+      const now = (Date.now() - burnStart) / 1000;
+      if (now < warmupSec) return;
+      if (!lastProbe) {
+        lastProbe = { t: now, iters }; // 预热结束，把当前累计值当基准
+        return;
+      }
+      const dt = now - lastProbe.t;
+      if (dt < probeSec) return;
+      const dmops = ((iters - lastProbe.iters) * OPS_PER_ITER) / 1e6 / dt;
+      if (dmops > 0) roundsSeries.push({ t: Math.round(now), mops: Math.round(dmops * 10) / 10 });
+      lastProbe = { t: now, iters };
+    },
+  });
+  const churn = loadDisk ? startDiskChurn(targetDir, { sizeMb: 256 }) : null;
   let lastTick = 0;
   while (!shouldStop() && (Date.now() - burnStart) / 1000 < duration) {
     await sleep(500);
@@ -113,10 +138,12 @@ export async function runDeep({
     if (elapsed - lastTick >= 5) {
       lastTick = elapsed;
       const last = series[series.length - 1] || {};
+      const lastRound = roundsSeries[roundsSeries.length - 1];
       emit({
         type: "tick",
         burnedSec: Math.round(elapsed),
         remainingSec: Math.max(0, Math.round(duration - elapsed)),
+        mops: lastRound?.mops ?? null,
         sample: { t: Math.round(elapsed), cpuC: last.cpuC ?? null, freqMhz: last.freqMhz ?? null, fanRpm: last.fanRpm ?? null },
       });
     }
@@ -146,14 +173,24 @@ export async function runDeep({
   }
 
   const maxFreq = capabilities.maxFreqMhz;
-  const stability = analyzeStability({ series, preMops, postMops: cancelled ? null : postMops, durationSec: burnedSec, nominalMhz: maxFreq });
+  const stability = analyzeStability({
+    warmupSec,
+    series,
+    rounds: roundsSeries,
+    preMops,
+    postMops: cancelled ? null : postMops,
+    durationSec: burnedSec,
+    nominalMhz: maxFreq,
+  });
   stability.notes = [...stability.notes, ...notes];
   stability.capabilities = { ...stability.capabilities, ...capabilities };
   stability.load = { cpuThreads: burnResult.threads, diskChurn: Boolean(churn), diskCycles: churnResult?.cycles ?? 0 };
   stability.cancelled = cancelled;
-  if (stability.perf) {
-    stability.perf.preRounds = preRounds;
-    stability.perf.postRounds = postRounds;
+  stability.probeSec = probeSec;
+  stability.warmupSec = warmupSec;
+  if (stability.boost) {
+    stability.boost.coldRounds = preRounds;
+    stability.boost.hotRounds = postRounds;
     // 多轮之间的离散度：太大说明机器上有别的负载在抢 CPU，结论只能参考
     const spread = (arr) => (arr && arr.length > 1 ? ((Math.max(...arr) - Math.min(...arr)) / Math.max(...arr)) * 100 : 0);
     const sp = spread(preRounds);
@@ -172,5 +209,5 @@ export async function runDeep({
 
   emit({ type: "phase", phase: "done", label: "分析完成", verdict: stability.verdict });
 
-  return { cancelled, stability, series: compact, preMops, postMops, burnedSec, wallMs: Date.now() - startedAt };
+  return { cancelled, stability, series: compact, rounds: roundsSeries, preMops, postMops, burnedSec, wallMs: Date.now() - startedAt };
 }

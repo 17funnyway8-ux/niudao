@@ -39,6 +39,7 @@ test("完整深度档：短烤机 + 采样 + 前后复测，产出可判读的�
     assert.equal(r.cancelled, false);
     assert.ok(r.stability, "必须有稳定性结论");
     assert.ok(["good", "ok", "warn", "bad", "unknown"].includes(r.stability.verdict.level));
+    assert.ok(Array.isArray(r.rounds), "应有逐轮吞吐序列");
     assert.ok(r.stability.perf, "应该拿到前后两次多核吞吐");
     assert.ok(r.stability.perf.keepPct > 50 && r.stability.perf.keepPct < 150, `保持率异常: ${r.stability.perf.keepPct}`);
     assert.ok(r.series.length > 0, "应该有曲线数据");

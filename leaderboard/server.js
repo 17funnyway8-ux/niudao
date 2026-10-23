@@ -11,7 +11,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
-import { Store } from "./store.js";
+import { MIN_SAMPLES, Store } from "./store.js";
 import { validateSubmission } from "../src/shared/schema.js";
 import { SUITE_VERSION, computeScores, gradeOf } from "../src/shared/scoring.js";
 
@@ -146,7 +146,20 @@ const server = http.createServer(async (req, res) => {
         });
       }
 
+      // 防刷分：同一台机器 12 小时内不重复接收，除非分数明显提升（>3%）
+      const prevEntry = [...store.best.values()].find((e) => e.fingerprint === v.fingerprint && e.suite === v.suite);
       const scores = computeScores(v.metrics, baselines.metrics);
+      if (prevEntry) {
+        const elapsedH = (Date.now() - (prevEntry.receivedAt || prevEntry.ts || 0)) / 3600000;
+        const improved = scores.composite > prevEntry.scores.composite * 1.03;
+        if (elapsedH < 12 && !improved) {
+          return json(res, 429, {
+            error: `同一台机器 12 小时内只能提交一次（上次 ${elapsedH.toFixed(1)} 小时前）。要覆盖旧成绩，提升幅度需超过 3%。`,
+            retryAfterH: Math.round((12 - elapsedH) * 10) / 10,
+            previousBest: prevEntry.scores.composite,
+          });
+        }
+      }
       const entry = {
         id: randomUUID(),
         ts: v.ts,
@@ -177,6 +190,8 @@ const server = http.createServer(async (req, res) => {
         total: board.total,
         improved: !prev || scores.composite > prev.scores.composite,
         previousBest: prev ? prev.scores.composite : null,
+        minSamples: MIN_SAMPLES,
+        sampleGated: board.total < MIN_SAMPLES,
         scores,
       });
     }

@@ -5,6 +5,19 @@
 import fs from "node:fs";
 import path from "node:path";
 
+/** 样本门槛：少于这个数量不显示百分位（对齐 Speedtest Global Index 的"样本不足不上榜"） */
+export const MIN_SAMPLES = 30;
+
+/** 中位数与 95% 置信区间（顺序统计量法，不假设分布） */
+export function medianCI(sortedAsc) {
+  const n = sortedAsc.length;
+  if (!n) return { median: null, ci: null };
+  const median = n % 2 ? sortedAsc[(n - 1) / 2] : (sortedAsc[n / 2 - 1] + sortedAsc[n / 2]) / 2;
+  if (n < 8) return { median, ci: null };
+  const k = Math.max(0, Math.floor(n / 2 - 1.96 * Math.sqrt(n) / 2));
+  return { median, ci: [sortedAsc[k], sortedAsc[n - 1 - k]] };
+}
+
 export class Store {
   constructor(file) {
     this.file = file;
@@ -87,6 +100,18 @@ export class Store {
       },
     }));
 
+    const values = pool.map((x) => x.v).sort((a, b) => a - b);
+    const stats = (() => {
+      const { median, ci } = medianCI(values);
+      return {
+        n: total,
+        median,
+        ci,
+        gated: total < MIN_SAMPLES,
+        needed: total < MIN_SAMPLES ? MIN_SAMPLES - total : 0,
+      };
+    })();
+
     let me = null;
     if (Number.isFinite(score)) {
       // 并列同名次（competition ranking）：rank = 严格高于我的机器数 + 1
@@ -98,7 +123,8 @@ export class Store {
         rank,
         value: score,
         total,
-        percentile: total ? Math.round(((behindList.length + equal * 0.5) / total) * 1000) / 10 : null,
+        percentile:
+          total >= MIN_SAMPLES ? Math.round(((behindList.length + equal * 0.5) / total) * 1000) / 10 : null,
         above: aheadList.length
           ? { rank: aheadList.length, value: aheadList[aheadList.length - 1].v, hardware: aheadList[aheadList.length - 1].e.hardware, alias: aheadList[aheadList.length - 1].e.alias }
           : null,
@@ -115,7 +141,7 @@ export class Store {
       buckets[b] = (buckets[b] || 0) + 1;
     }
 
-    return { dim, suite: suite || null, arch: arch || null, total, offset, limit, entries, me, buckets };
+    return { dim, suite: suite || null, arch: arch || null, total, offset, limit, entries, me, buckets, stats };
   }
 
   byFingerprint(fingerprint) {

@@ -7,7 +7,7 @@
   "engines": { "node": ">=22" },
   "scripts": {
     "dev": "node src/server/index.js --port 7788",
-    "test": "node --test test/scoring.test.js test/schema.test.js test/stability.test.js test/leaderboard.test.js test/http.test.js test/bench.test.js test/deep.test.js",
+    "test": "node --test test/scoring.test.js test/schema.test.js test/stability.test.js test/leaderboard.test.js test/http.test.js test/bench.test.js test/deep.test.js test/storage.test.js",
     "build": "node build.mjs",
     "pack": "node build.mjs --pack",
     "lb": "node leaderboard/server.js"

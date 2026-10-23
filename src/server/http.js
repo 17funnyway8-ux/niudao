@@ -11,7 +11,9 @@ import { fileURLToPath } from "node:url";
 import { snapshot } from "./hardware.js";
 import { STAGES, runSuite } from "./runner.js";
 import { DEEP_LIMITS, normalizeDuration, runDeep } from "./deep.js";
-import { appendResult, deleteResult, getResult, listResults, localRank, updateResult } from "./store.js";
+import { appendResult, deleteResult, getResult, listResults, localRank, pageResults, storageInfo, updateResult } from "./store.js";
+import { counter, gauge, observe, renderPrometheus } from "./metrics.js";
+import { initLogger, log } from "./log.js";
 import { buildCard, buildMarkdown } from "./report.js";
 import { PATHS, loadBaselines, loadSettings, saveSettings, TARGET_DIR, ensureDataDir } from "./settings.js";
 import * as remote from "./remote.js";
@@ -293,6 +295,7 @@ async function startDeep(body = {}) {
         hardware: { ...hw.hardware, volume: target },
         stability: run.stability,
         series: run.series,
+        rounds: run.rounds,
         preMops: run.preMops,
         postMops: run.postMops,
         burnedSec: run.burnedSec,
@@ -323,7 +326,26 @@ async function handleApi(req, res, url) {
   const method = req.method || "GET";
 
   if (pathname === "/api/health") {
-    return json(res, 200, { ok: true, suite: SUITE_VERSION, client: CLIENT_VERSION, status: state.status });
+    const uptimeSec = Math.round(process.uptime());
+    return json(res, 200, {
+      ok: true,
+      suite: SUITE_VERSION,
+      client: CLIENT_VERSION,
+      status: state.status,
+      kind: state.kind,
+      uptimeSec,
+      storage: storageInfo(),
+      log: log.file(),
+    });
+  }
+
+  if (pathname === "/api/metrics") {
+    gauge("niudao_run_active", {}, state.status === "running" ? 1 : 0);
+    gauge("niudao_uptime_seconds", {}, Math.round(process.uptime()));
+    gauge("niudao_results_total", {}, storageInfo().total);
+    gauge("niudao_memory_rss_bytes", {}, process.memoryUsage().rss);
+    res.writeHead(200, { "content-type": "text/plain; version=0.0.4; charset=utf-8", "cache-control": "no-store" });
+    return res.end(renderPrometheus());
   }
 
   if (pathname === "/api/bootstrap") {
@@ -423,7 +445,9 @@ async function handleApi(req, res, url) {
   }
 
   if (pathname === "/api/results" && method === "GET") {
-    return json(res, 200, { items: listResults(Number(url.searchParams.get("limit")) || 50) });
+    const limit = Math.min(100, Math.max(1, Number(url.searchParams.get("limit")) || 20));
+    const before = Number(url.searchParams.get("before")) || null;
+    return json(res, 200, pageResults({ limit, before }));
   }
 
   const resultMatch = pathname.match(/^\/api\/results\/([A-Za-z0-9._-]+)(?:\/(submit|report\.md|export\.json|card))?$/);
@@ -480,7 +504,11 @@ async function handleApi(req, res, url) {
       });
     }
     try {
-      const latest = getResult(state.resultId) || listResults(1)[0] || null;
+      // 取最近一次「快速档」成绩来算"我排第几"（深度档没有综合分）
+      const latest =
+        getResult(state.resultId) ||
+        listResults(20).find((r) => r.kind !== "deep") ||
+        null;
       const score = latest
         ? dim === "overall"
           ? latest.scores?.composite ?? latest.composite ?? null
@@ -505,12 +533,45 @@ async function handleApi(req, res, url) {
   return json(res, 404, { error: "接口不存在" });
 }
 
+/** 优雅关闭：把正在跑的测试停干净，别留下半条数据和一堆 worker。 */
+export async function shutdown({ timeoutMs = 8000 } = {}) {
+  const started = Date.now();
+  if (state.status === "running") {
+    state.cancelRequested = true;
+    while (state.status === "running" && Date.now() - started < timeoutMs) {
+      await new Promise((r) => setTimeout(r, 200));
+    }
+    if (state.status === "running") {
+      state.status = "interrupted";
+      state.error = "服务被停止，本次测试中断（已保存部分结果）";
+    }
+  }
+  log.info("shutdown", { status: state.status, elapsedMs: Date.now() - started });
+  counter("niudao_shutdown_total", { status: state.status });
+  return { status: state.status, elapsedMs: Date.now() - started };
+}
+
 export function createServer() {
   return http.createServer((req, res) => {
+    const started = process.hrtime.bigint();
     const url = new URL(req.url || "/", "http://localhost");
-    if (url.pathname.startsWith("/api/")) {
+    const isApi = url.pathname.startsWith("/api/");
+
+    res.on("finish", () => {
+      const ms = Number(process.hrtime.bigint() - started) / 1e6;
+      const route = url.pathname.replace(/\/api\/results\/[\w.-]+/, "/api/results/:id");
+      counter("niudao_http_requests_total", { method: req.method, route, status: res.statusCode });
+      observe("niudao_http_duration_ms", { route }, ms);
+      if (isApi) {
+        log.debug("http", { method: req.method, route, status: res.statusCode, ms: Math.round(ms) });
+      }
+    });
+
+    if (isApi) {
       handleApi(req, res, url).catch((err) => {
-        json(res, 500, { error: String(err?.message || err) });
+        log.error("api_error", { route: url.pathname, message: String(err?.message || err) });
+        counter("niudao_api_errors_total", { route: url.pathname });
+        if (!res.headersSent) json(res, 500, { error: String(err?.message || err) });
       });
       return;
     }
@@ -519,6 +580,15 @@ export function createServer() {
 }
 
 export function start({ port = 0, socketPath = "" } = {}) {
+  initLogger(PATHS.data);
+  process.on("uncaughtException", (err) => {
+    log.error("uncaught_exception", { message: String(err?.message || err), stack: String(err?.stack || "").slice(0, 800) });
+    counter("niudao_process_errors_total", { kind: "uncaughtException" });
+  });
+  process.on("unhandledRejection", (reason) => {
+    log.error("unhandled_rejection", { message: String(reason?.message || reason) });
+    counter("niudao_process_errors_total", { kind: "unhandledRejection" });
+  });
   const server = createServer();
   return new Promise((resolve, reject) => {
     server.once("error", reject);

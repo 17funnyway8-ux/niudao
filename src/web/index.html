@@ -27,11 +27,16 @@
         </div>
       </div>
       <nav class="tabs" id="tabs">
-        <button data-view="home" class="tab is-active">体检</button>
+        <button data-view="home" class="tab is-active" aria-label="体检">体检</button>
         <button data-view="board" class="tab">天梯</button>
         <button data-view="history" class="tab">成绩单</button>
         <button data-view="settings" class="tab">设置</button>
       </nav>
+      <button class="icon-btn" id="theme-toggle" title="切换明暗主题" aria-label="切换明暗主题">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+          <circle cx="12" cy="12" r="4.2"/><path d="M12 2v2.5M12 19.5V22M2 12h2.5M19.5 12H22M4.9 4.9l1.8 1.8M17.3 17.3l1.8 1.8M19.1 4.9l-1.8 1.8M6.7 17.3l-1.8 1.8" stroke-linecap="round"/>
+        </svg>
+      </button>
       <div class="machine-chip" id="machine-chip" title="本机硬件">
         <span class="dot"></span>
         <span id="machine-label">读取中…</span>

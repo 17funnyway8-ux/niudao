@@ -1,6 +1,20 @@
 /* 牛刀前端：零框架、零依赖，全部视图用原生 DOM 拼装。 */
+import { bindChartHover, lineChart, roundBars } from "./js/chart.js";
 
 const $ = (sel, root = document) => root.querySelector(sel);
+
+/* 主题：跟随系统，可手动覆盖（记在 localStorage） */
+const THEME_KEY = "niudao.theme";
+function applyTheme(mode) {
+  const sys = window.matchMedia?.("(prefers-color-scheme: light)").matches ? "light" : "dark";
+  document.documentElement.dataset.theme = mode || localStorage.getItem(THEME_KEY) || sys;
+}
+applyTheme();
+document.getElementById("theme-toggle")?.addEventListener("click", () => {
+  const next = document.documentElement.dataset.theme === "light" ? "dark" : "light";
+  localStorage.setItem(THEME_KEY, next);
+  document.documentElement.dataset.theme = next;
+});
 const appEl = () => $("#app");
 
 const esc = (s) =>
@@ -111,50 +125,30 @@ const fmtClock = (sec) => {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 };
 
+/** 每项的测法，直接来自该次运行的 detail，不写死 */
+function howMeasured(r, key) {
+  const d = r.detail || {};
+  const threads = d.cpu_multi?.threads || r.hardware?.threads || "?";
+  const map = {
+    cpu_single: `2 轮 × ${Math.round((r.durations?.cpu_single || 10000) / 2000)}s`,
+    cpu_multi: `${threads} 线程 × ${Math.round((r.durations?.cpu_multi || 5000) / 1000)}s`,
+    crypto_aes: `GCM ${d.crypto?.totalMb || "—"}MB / ${d.crypto?.chunkMb || "—"}MB 块`,
+    zlib: `deflate L${d.crypto?.level || 6} ${d.crypto?.sizeMb || "—"}MB（压缩率 ${d.crypto?.ratio ?? "—"}）`,
+    mem_copy: `${d.memory?.bytesMb || "—"}MB 拷贝 × ${d.memory?.reps || "—"}`,
+    mem_latency: `${d.memory?.sizeMb || "—"}MB 随机环 / ${((d.memory?.steps || 0) / 1e6).toFixed(0) || "—"}M 步`,
+    disk_seq_read: `${d.disk_seq?.sizeMb || "—"}MB O_DIRECT${d.disk_seq?.direct === false ? "（退化）" : ""}`,
+    disk_seq_write: `${d.disk_seq?.sizeMb || "—"}MB O_DIRECT${d.disk_seq?.direct === false ? "（退化）" : ""}`,
+    disk_rand_read: `4K QD1 / ${d.disk_random?.fileMb || "—"}MB 文件 / ${((d.disk_random?.readLatUs || 0) / 1000).toFixed(2) || "—"}ms`,
+    disk_rand_write: `4K QD1 / ${d.disk_random?.fileMb || "—"}MB 文件`,
+  };
+  return map[key] || "—";
+}
+
 const VERDICT_TONE = { good: "good", ok: "warn", warn: "warn", bad: "bad", unknown: "" };
 
 function verdictPill(level, headline) {
   if (!headline) return "";
   return `<span class="pill ${VERDICT_TONE[level] || ""}">${esc(headline)}</span>`;
-}
-
-/** 折线图：输入 [{t, value}]，输出 SVG。够用就好，不引图表库。 */
-function sparkSvg(points, { color = "#d7ff3e", unit = "", height = 132, label = "" } = {}) {
-  const pts = (points || []).filter((p) => typeof p.value === "number" && Number.isFinite(p.value));
-  if (pts.length < 2) return `<div class="empty" style="padding:18px">数据点不足（${pts.length}/2）</div>`;
-  const w = 760;
-  const h = height;
-  const xMax = Math.max(...pts.map((p) => p.t)) || 1;
-  const ys = pts.map((p) => p.value);
-  const yMin = Math.min(...ys);
-  const yMax = Math.max(...ys);
-  const span = yMax - yMin || Math.abs(yMax) * 0.1 || 1;
-  const lo = yMin - span * 0.12;
-  const hi = yMax + span * 0.12;
-  const X = (t) => 40 + (t / xMax) * (w - 56);
-  const Y = (v) => h - 22 - ((v - lo) / (hi - lo)) * (h - 40);
-  const d = pts.map((p, i) => `${i ? "L" : "M"}${X(p.t).toFixed(1)},${Y(p.value).toFixed(1)}`).join(" ");
-  const area = `${d} L${X(pts[pts.length - 1].t).toFixed(1)},${h - 22} L${X(pts[0].t).toFixed(1)},${h - 22} Z`;
-  const gridY = [0, 0.5, 1].map((f) => {
-    const v = lo + (hi - lo) * (1 - f);
-    const y = Y(v);
-    return `<line x1="40" y1="${y.toFixed(1)}" x2="${w - 16}" y2="${y.toFixed(1)}" stroke="#1a2530" stroke-width="1"/>
-            <text x="34" y="${(y + 3.5).toFixed(1)}" text-anchor="end" fill="#5d6d7c" font-size="10" font-family="monospace">${Math.round(v)}</text>`;
-  });
-  const gid = `g${Math.random().toString(36).slice(2, 8)}`;
-  return `<svg viewBox="0 0 ${w} ${h}" style="width:100%;height:auto;display:block" role="img" aria-label="${esc(label)}">
-    ${gridY.join("")}
-    <path d="${area}" fill="url(#${gid})" opacity="0.5"/>
-    <path d="${d}" fill="none" stroke="${color}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
-    <circle cx="${X(pts[pts.length - 1].t).toFixed(1)}" cy="${Y(pts[pts.length - 1].value).toFixed(1)}" r="3" fill="${color}"/>
-    <text x="40" y="${h - 6}" fill="#5d6d7c" font-size="10" font-family="monospace">0s</text>
-    <text x="${w - 16}" y="${h - 6}" text-anchor="end" fill="#5d6d7c" font-size="10" font-family="monospace">${Math.round(xMax)}s</text>
-    <text x="${w - 16}" y="14" text-anchor="end" fill="#8b9aa9" font-size="11" font-family="monospace">${Math.round(yMax)}${esc(unit)}</text>
-    <defs><linearGradient id="${gid}" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="${color}" stop-opacity="0.45"/>
-      <stop offset="1" stop-color="${color}" stop-opacity="0"/>
-    </linearGradient></defs>
-  </svg>`;
 }
 
 /* ---------------- home ---------------- */
@@ -215,7 +209,7 @@ function homeView() {
           </div>
           <div class="progress"><i style="width:${pctDone}%"></i></div>
           <div class="section-title" style="margin-top:16px">温度曲线（实时）</div>
-          ${sparkSvg(tempPoints, { unit: "°C", height: 150, label: "实时温度曲线" })}
+          ${lineChart(tempPoints, { unit: "°C", height: 150, label: "实时温度曲线", id: "live-temp", threshold: 90, thresholdLabel: "90°C 警示" })}
           <div class="faint" style="font-size:12px;margin-top:8px">
             烤机结束后会再做一次多核跑分，用来算"满载后还剩多少性能"。
           </div>
@@ -368,19 +362,37 @@ function homeView() {
   </div>`;
 }
 
-/** 深度档报告：结论 + 三块关键数据 + 两条曲线 */
+/** 深度档报告：结论 + 逐轮稳定性 + 温频曲线 */
 function deepResultView(r) {
   const s = r.stability || {};
   const v = s.verdict || {};
+  const steady = s.stability || null;
+  const boost = s.boost || s.perf || null;
+  const temp = s.temp || null;
+  const freq = s.freq || null;
+  const rounds = (r.rounds || s.rounds || []).map((x) => (typeof x === "number" ? { mops: x } : x));
+  const roundValues = rounds.map((x) => x.mops).filter((n) => Number.isFinite(n));
   const tempSeries = (r.series || []).map((p) => ({ t: p.t, value: p.cpuC }));
   const freqSeries = (r.series || []).map((p) => ({ t: p.t, value: p.freqMhz }));
 
   const cell = (label, value, hint = "") =>
-    `<div style="padding:10px 0;border-bottom:1px dashed var(--line-soft)">
-       <div class="faint" style="font-size:11.5px">${esc(label)}</div>
-       <div class="mono" style="font-size:19px">${value}</div>
-       ${hint ? `<div class="faint" style="font-size:11px">${esc(hint)}</div>` : ""}
+    `<div class="stat">
+       <div class="stat-label">${esc(label)}</div>
+       <div class="stat-value">${value}</div>
+       ${hint ? `<div class="stat-hint">${esc(hint)}</div>` : ""}
      </div>`;
+
+  const steadyCell = steady
+    ? cell(
+        "满载稳定性",
+        `<span style="color:${steady.pct >= 97 ? "var(--good)" : steady.pct >= 92 ? "var(--warn)" : "var(--bad)"}">${num(steady.pct, 1)}%</span>`,
+        `最差 ${num(steady.worstMops)} / 最好 ${num(steady.bestMops)} MOps/s · ${steady.rounds} 轮`,
+      )
+    : cell("满载稳定性", `<span class="faint">样本不足</span>`, "逐轮不足 3 轮，退回冷/热口径");
+
+  const boostCell = boost
+    ? cell("加速回落", `${num(boost.coldMops)} → ${num(boost.hotMops)}`, `冷态到热态 ${num(boost.keepPct, 1)}%（仅供参考）`)
+    : cell("加速回落", `<span class="faint">未测</span>`);
 
   return `<div class="stack">
     <div class="row">
@@ -395,6 +407,7 @@ function deepResultView(r) {
         ${verdictPill(v.level, s.cancelled ? "已中止" : "")}
         <span class="spacer"></span>
         <span class="pill">满载 ${(r.burnedSec || 0) < 90 ? `${Math.round(r.burnedSec || 0)} 秒` : `${Math.round((r.burnedSec || 0) / 60)} 分钟`}${r.loadDisk ? " · 含磁盘压力" : ""}</span>
+        ${s.probeSec ? `<span class="pill">每 ${s.probeSec}s 一轮</span>` : ""}
       </div>
       <div class="score-sub" style="margin-top:8px">${esc(v.detail || "")}</div>
       <div class="row" style="margin-top:14px;gap:8px;flex-wrap:wrap">
@@ -404,32 +417,37 @@ function deepResultView(r) {
     </div>
 
     <div class="grid-3">
+      <div class="card tight">${steadyCell}${boostCell}</div>
       <div class="card tight">
-        <div class="section-title">性能保持</div>
-        ${s.perf ? cell("冷态多核", `${num(s.perf.preMops)} <span class="faint" style="font-size:12px">MOps/s</span>`) : `<div class="faint">未采集</div>`}
-        ${s.perf ? cell("满载后多核", `${num(s.perf.postMops)} <span class="faint" style="font-size:12px">MOps/s</span>`) : ""}
-        ${s.perf ? cell("保持率", `<span style="color:${s.perf.keepPct >= 97 ? "var(--lime)" : s.perf.keepPct >= 92 ? "var(--amber)" : "var(--red)"}">${num(s.perf.keepPct, 1)}%</span>`, `损失 ${num(s.perf.lossPct, 1)}%`) : ""}
+        ${temp
+          ? cell("温度", `${num(temp.startC, 1)} → ${num(temp.endC, 1)} <span class="faint" style="font-size:12px">°C</span>`, `最高 ${num(temp.maxC, 1)}°C · 升温 ${num(temp.riseC, 1)}°C`)
+          : cell("温度", `<span class="faint">无传感器</span>`)}
+        ${temp && temp.plateauSec !== null ? cell("到达 90% 稳态", `${temp.plateauSec}s`) : ""}
       </div>
       <div class="card tight">
-        <div class="section-title">温度</div>
-        ${s.temp ? cell("起始 → 结束", `${num(s.temp.startC, 1)} → ${num(s.temp.endC, 1)} <span class="faint" style="font-size:12px">°C</span>`) : `<div class="faint">无传感器</div>`}
-        ${s.temp ? cell("最高", `${num(s.temp.maxC, 1)} <span class="faint" style="font-size:12px">°C</span>`, `升温 ${num(s.temp.riseC, 1)}°C`) : ""}
-        ${s.temp && s.temp.plateauSec !== null ? cell("到达 90% 稳态", `${s.temp.plateauSec}s`) : ""}
-      </div>
-      <div class="card tight">
-        <div class="section-title">频率</div>
-        ${s.freq ? cell("峰值 → 稳态", `${num(s.freq.peakMhz)} → ${num(s.freq.steadyMhz)} <span class="faint" style="font-size:12px">MHz</span>`) : `<div class="faint">无频率信息</div>`}
-        ${s.freq && s.freq.nominalMhz ? cell("标称最高", `${num(s.freq.nominalMhz)} MHz`) : ""}
-        ${s.freq && s.freq.dropPct !== null ? cell("频率下降", `${num(s.freq.dropPct, 1)}%`) : ""}
+        ${freq
+          ? cell("频率", `${num(freq.peakMhz)} → ${num(freq.steadyMhz)} <span class="faint" style="font-size:12px">MHz</span>`, freq.nominalMhz ? `标称最高 ${num(freq.nominalMhz)} MHz` : "")
+          : cell("频率", `<span class="faint">无频率信息</span>`)}
+        ${freq && freq.dropPct !== null ? cell("频率下降", `${num(freq.dropPct, 1)}%`) : ""}
       </div>
     </div>
 
+    ${
+      roundValues.length
+        ? `<div class="card">
+             <div class="card-head"><h2>逐轮吞吐</h2><span class="sub">稳定性 = 最差轮 ÷ 最好轮；亮色为最好，红色为最差</span></div>
+             ${roundBars(roundValues, { unit: "MOps/s", best: steady?.bestMops, worst: steady?.worstMops })}
+             <div class="faint" style="font-size:11.5px;margin-top:6px">共 ${roundValues.length} 轮，每 ${s.probeSec || "?"} 秒一轮；首轮与末尾残段不计入稳定性</div>
+           </div>`
+        : ""
+    }
+
     <div class="card">
-      <div class="card-head"><h2>温度曲线</h2><span class="sub">逐秒采样，降采样后保留峰值</span></div>
-      ${sparkSvg(tempSeries, { color: "#ffb545", unit: "°C", height: 160, label: "温度曲线" })}
+      <div class="card-head"><h2>温度曲线</h2><span class="sub">逐秒采样，降采样保留峰值</span></div>
+      ${lineChart(tempSeries, { color: "#ffb545", unit: "°C", height: 160, label: "温度曲线", id: "res-temp", threshold: 90, thresholdLabel: "90°C 警示" })}
       <div class="divider"></div>
       <div class="card-head"><h2>频率曲线</h2><span class="sub">降频是否被功耗墙压住，一眼能看出来</span></div>
-      ${sparkSvg(freqSeries, { color: "#57c1ff", unit: "MHz", height: 140, label: "频率曲线" })}
+      ${lineChart(freqSeries, { color: "#57c1ff", unit: "MHz", height: 140, label: "频率曲线", id: "res-freq" })}
     </div>
 
     ${
@@ -485,7 +503,7 @@ function resultView() {
       <div class="card">
         <div class="card-head"><h2>原始指标</h2><span class="sub">归一化分 = 实测 / 基准 × 1000</span></div>
         <table class="table">
-          <thead><tr><th>指标</th><th class="num">实测</th><th class="num">归一化</th></tr></thead>
+          <thead><tr><th>指标</th><th class="num">实测</th><th class="num">归一化</th><th>测法</th></tr></thead>
           <tbody>
             ${metrics
               .filter(([k]) => r.metrics[k] !== undefined)
@@ -493,7 +511,7 @@ function resultView() {
                 const raw = r.metrics[k];
                 const shown =
                   raw >= 1000 ? num(raw) : raw >= 10 ? num(raw, 1) : num(raw, 2);
-                return `<tr><td>${esc(def.label)}</td><td class="num">${shown} <span class="faint">${esc(def.unit)}</span></td><td class="num">${s.subs[k] === undefined ? "—" : num(s.subs[k], 1)}</td></tr>`;
+                return `<tr><td>${esc(def.label)}</td><td class="num">${shown} <span class="faint">${esc(def.unit)}</span></td><td class="num">${s.subs[k] === undefined ? "—" : num(s.subs[k], 1)}</td><td class="faint" style="font-size:11.5px">${esc(howMeasured(r, k))}</td></tr>`;
               })
               .join("")}
           </tbody>
@@ -584,12 +602,32 @@ function boardView() {
         </div>
         <div class="row faint" style="font-size:11px;margin-top:4px"><span>${num(keys[0])} 分</span><span class="spacer"></span><span>${num(keys[keys.length - 1] + 99)} 分</span></div>`;
     })();
+    const stats = data.stats || null;
+    const statsLine = stats
+      ? stats.gated
+        ? `<div class="hint-box" style="margin-bottom:12px">
+             样本不足：当前 <b class="mono">${num(stats.n)}</b> 台，凑够 <b class="mono">${num(stats.n + stats.needed)}</b> 台才显示百分位（再差 ${num(stats.needed)} 台）。
+             统计口径参考 Speedtest Global Index：样本不够就不给名次百分比。
+             ${stats.median ? `<br/>当前中位数 <b class="mono">${num(stats.median)}</b>。` : ""}
+           </div>`
+        : stats.median
+          ? `<div class="faint" style="font-size:12px;margin-bottom:10px">
+               共 <b class="mono">${num(stats.n)}</b> 台 · 中位数 <b class="mono">${num(stats.median)}</b>${
+                 stats.ci ? ` · 95% 置信区间 ${num(stats.ci[0])}–${num(stats.ci[1])}` : ""
+               }
+             </div>`
+          : ""
+      : "";
     body += `
+      ${statsLine}
       ${
-        me && me.percentile !== undefined && me.percentile !== null
+        me
           ? `<div class="hint-box" style="margin-bottom:14px">
-              你这台在 <b class="mono">${num(data.total)}</b> 台机器里排第 <b class="mono">${num(me.rank)}</b>，
-              超过 <b class="mono">${num(me.percentile, 1)}%</b> 的机器。
+              你这台在 <b class="mono">${num(data.total)}</b> 台机器里排第 <b class="mono">${num(me.rank)}</b>${
+                me.percentile !== null && me.percentile !== undefined
+                  ? `，超过 <b class="mono">${num(me.percentile, 1)}%</b> 的机器`
+                  : `（样本不足 ${num(stats?.n ?? data.total)}/${num((stats?.n ?? 0) + (stats?.needed ?? 0))}，暂不给百分位）`
+              }。
               ${gap ? `<br/>离前一名还差 <b class="mono">${num(gap)}</b> 分。` : ""}
               ${me.above ? `<br/>前一名：${esc(me.above.alias || me.above.hardware?.cpu_model || "—")} · ${num(me.above.value)}` : `<br/>你就是榜一。`}
               ${me.below ? `<br/>后一名：${esc(me.below.alias || me.below.hardware?.cpu_model || "—")} · ${num(me.below.value)}` : ""}
@@ -735,6 +773,46 @@ function settingsView() {
   </div>`;
 }
 
+/* ---------------- 路由（hash，可分享可刷新） ---------------- */
+const ROUTES = new Set(["home", "board", "history", "settings", "result"]);
+
+function currentRoute() {
+  const raw = location.hash.replace(/^#\/?/, "");
+  const [view, id] = raw.split("/");
+  return { view: ROUTES.has(view) ? view : "home", id: id ? decodeURIComponent(id) : null };
+}
+
+function navigate(hash) {
+  if (location.hash === hash) return applyRoute();
+  location.hash = hash;
+}
+
+async function applyRoute() {
+  const { view, id } = currentRoute();
+  if (view === "result") {
+    if (!id) return navigate("#/home");
+    if (state.result?.id !== id) {
+      try {
+        state.result = await api(`/api/results/${encodeURIComponent(id)}`);
+      } catch (e) {
+        toast(e.message, "err");
+        return navigate("#/home");
+      }
+    }
+    state.resultId = id;
+    state.view = "result";
+    render();
+    return;
+  }
+  state.view = view;
+  if (view === "board") {
+    render();
+    loadBoard();
+    return;
+  }
+  await refreshBoot();
+}
+
 /* ---------------- render ---------------- */
 function render() {
   const view = state.view;
@@ -759,10 +837,7 @@ async function refreshBoot() {
 }
 
 async function openResult(id) {
-  state.result = await api(`/api/results/${id}`);
-  state.resultId = id;
-  state.view = "result";
-  render();
+  navigate(`#/result/${encodeURIComponent(id)}`);
 }
 
 async function startRun() {
@@ -944,17 +1019,19 @@ document.addEventListener("change", (ev) => {
 });
 
 document.querySelectorAll("#tabs .tab").forEach((tab) => {
-  tab.addEventListener("click", async () => {
-    state.view = tab.dataset.view;
-    if (state.view === "board") return loadBoard();
-    if (state.view !== "result") await refreshBoot();
-    else render();
-  });
+  tab.addEventListener("click", () => navigate(`#/${tab.dataset.view}`));
+});
+
+bindChartHover(document);
+
+window.addEventListener("hashchange", () => {
+  applyRoute().catch((e) => toast(e.message, "err"));
 });
 
 (async () => {
   try {
-    await refreshBoot();
+    if (!location.hash) history.replaceState(null, "", "#/home");
+    await applyRoute();
     if (state.run?.status === "running") pollRun();
   } catch (e) {
     appEl().innerHTML = `<div class="empty"><h3>加载失败</h3><div>${esc(e.message)}</div></div>`;

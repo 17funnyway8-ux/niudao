@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
-import { Store } from "../leaderboard/store.js";
+import { MIN_SAMPLES, Store, medianCI } from "../leaderboard/store.js";
 import { computeScores, gradeOf } from "../src/shared/scoring.js";
 
 const baselines = JSON.parse(
@@ -57,9 +57,36 @@ test("按维度排序 + 排名 + 百分位 + 前后邻位", () => {
   assert.deepEqual(board.entries.map((e) => e.rank), [1, 2, 3, 4]);
   assert.ok(board.entries[0].value > board.entries[3].value, "降序");
   assert.equal(board.me.rank, 3, "2000/1500 在它前面，另有 1 台与它并列 → 名次 3");
-  assert.equal(board.me.percentile, 37.5);
+  assert.equal(board.me.percentile, null, "样本不足 30 台，不给百分位（对齐 Speedtest 的样本门槛）");
+  assert.equal(board.stats.gated, true);
+  assert.equal(board.stats.needed, MIN_SAMPLES - 4);
   assert.equal(board.me.above.value, 1500, "前一名就是紧挨着它的那台");
   assert.equal(board.me.below.value, 500);
+});
+
+test("样本达到门槛后才给百分位，并给出中位数与置信区间", () => {
+  const s = tmpStore();
+  for (let i = 0; i < MIN_SAMPLES; i += 1) {
+    const mult = 0.5 + (i / MIN_SAMPLES) * 1.5;
+    s.add(entry({ fp: String(i).padStart(16, "0"), metrics: Object.fromEntries(Object.entries(baselines).map(([k, v]) => [k, k === "mem_latency" ? v / mult : v * mult])) }));
+  }
+  const board = s.leaderboard({ dim: "overall", score: 1000 });
+  assert.equal(board.total, MIN_SAMPLES);
+  assert.equal(board.stats.gated, false);
+  assert.ok(board.me.percentile > 0 && board.me.percentile < 100, `百分位异常: ${board.me.percentile}`);
+  assert.ok(board.stats.median > 0);
+  assert.equal(board.stats.ci.length, 2);
+  assert.ok(board.stats.ci[0] <= board.stats.median && board.stats.median <= board.stats.ci[1]);
+});
+
+test("中位数置信区间：顺序统计量法，不假设分布", () => {
+  const asc = Array.from({ length: 40 }, (_, i) => i + 1);
+  const { median, ci } = medianCI(asc);
+  assert.equal(median, 20.5);
+  assert.ok(ci[0] < median && median < ci[1]);
+  // 样本太少时不给区间
+  assert.equal(medianCI([1, 2, 3]).ci, null);
+  assert.equal(medianCI([]).median, null);
 });
 
 test("架构分开排：ARM 不与 x86 混", () => {

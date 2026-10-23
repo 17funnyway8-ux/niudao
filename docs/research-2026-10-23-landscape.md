@@ -222,6 +222,21 @@
 
 ---
 
+## 8. 落地情况（2026-10-23 当日完成）
+
+| 编号 | 结论 | 落地 |
+|---|---|---|
+| P0-1 | 逐轮稳定性（3DMark） | `deep.js` 逐轮采样 + 预热窗；`stability.js` `roundsToStability`；报告出逐轮柱图 |
+| P0-2 | 样本门槛与置信（Speedtest） | `leaderboard/store.js` `MIN_SAMPLES=30` + 中位数/95% CI；提交 12h 防刷 |
+| P0-3 | 数据层（Kuma/Beszel） | `store.js` SQLite 主后端 + JSONL 兜底 + 迁移 + 游标分页 + 保留策略 |
+| P0-4 | 可观测性（Netdata/Grafana） | `/api/metrics`、`log.js` JSON 日志、异常兜底、SIGTERM 优雅退出 |
+| P1-6 | 图表交互（Grafana） | `web/js/chart.js` 十字线 + tooltip + 阈值线 |
+| P1-7 | 深链（Geekbench/PTS） | hash 路由，`#/result/<id>` 可分享可刷新 |
+| P1-9 | 主题（Grafana/Kuma） | 跟随系统 + 手动切换 + 亮色变量表 |
+| P1-10 | 样本量与测法（Notebookcheck） | 指标表新增「测法」列；榜单显示 n / 中位数 / CI / 缺口 |
+
+未做（已记入 spec 第 10.6 节）：i18n、完整 a11y、对比视图、同型号榜、阈值告警、公开 API。
+
 ## 7. 来源
 
 - GitHub API：`api.github.com/repos/*`（2026-10-23 实时读取 star/语言/许可/最近推送）

@@ -1,7 +1,7 @@
 /** 稳定性分析器：纯函数，逐条钉住"结论是怎么算出来的"。 */
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { analyzeStability, downsample } from "../src/shared/stability.js";
+import { analyzeStability, downsample, roundsToStability } from "../src/shared/stability.js";
 
 /** 造一段曲线：从 startC 升温到 maxC，频率从 peak 掉到 steady */
 function series({ seconds = 60, startC = 40, maxC = 80, plateauAt = 20, peakMhz = 3000, steadyMhz = 2900 } = {}) {
@@ -83,4 +83,40 @@ test("降采样保留峰值而不是平均值", () => {
   assert.ok(out.length <= 60);
   assert.equal(Math.max(...out.map((p) => p.cpuC)), 99, "尖峰不能被抹平");
   assert.equal(out[0].t, 0);
+});
+
+test("逐轮稳定性：只丢末轮残段（热身段在采集阶段按时间窗排除）", () => {
+  const rounds = [
+    { t: 10, mops: 15000 },
+    { t: 15, mops: 14850 },
+    { t: 20, mops: 14550 },
+    { t: 25, mops: 9000 }, // 末轮：可能被截断，不算
+  ];
+  const r = roundsToStability(rounds);
+  assert.equal(r.rounds, 3);
+  assert.equal(r.bestMops, 15000);
+  assert.equal(r.worstMops, 14550);
+  assert.equal(r.pct, 97);
+});
+
+test("逐轮样本不足 3 轮时不给稳定性", () => {
+  assert.equal(roundsToStability([{ t: 5, mops: 1 }, { t: 10, mops: 2 }]), null);
+  assert.equal(roundsToStability([]), null);
+});
+
+test("有逐轮数据时优先用它判定，冷/热只作旁证", () => {
+  // 逐轮很稳（99%），但冷/热差 12% —— 判定应看逐轮
+  const rounds = [{ t: 10, mops: 9900 }, { t: 15, mops: 9801 }, { t: 20, mops: 100 }];
+  const s = analyzeStability({ series: series(), rounds, preMops: 15000, postMops: 13200, durationSec: 600 });
+  assert.equal(s.stability.pct, 99);
+  assert.equal(s.verdict.level, "good");
+  assert.equal(s.boost.keepPct, 88, "冷/热数据要保留下来作为旁证");
+  assert.match(s.verdict.detail, /逐轮/);
+});
+
+test("逐轮明显下降时给出降频结论", () => {
+  const rounds = [{ t: 10, mops: 10000 }, { t: 15, mops: 8800 }, { t: 20, mops: 999 }];
+  const s = analyzeStability({ series: series(), rounds, preMops: 10000, postMops: 9000, durationSec: 600 });
+  assert.equal(s.stability.pct, 88);
+  assert.equal(s.verdict.level, "warn");
 });

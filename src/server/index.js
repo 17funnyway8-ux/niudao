@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /** 牛刀服务入口：默认监听端口（开发），安装后由 cmd/main 通过 --socket 挂到统一网关。 */
-import { start } from "./http.js";
+import { shutdown, start } from "./http.js";
 import { CLIENT_VERSION, SUITE_VERSION } from "../shared/scoring.js";
 
 function arg(name, fallback = "") {
@@ -19,8 +19,12 @@ if (socketPath) {
   console.log(`[niudao] v${CLIENT_VERSION} suite v${SUITE_VERSION} listening on http://0.0.0.0:${port}`);
 }
 
+let closing = false;
 for (const sig of ["SIGTERM", "SIGINT"]) {
-  process.on(sig, () => {
+  process.on(sig, async () => {
+    if (closing) return;
+    closing = true;
+    await shutdown({ timeoutMs: 8000 });
     server.close(() => process.exit(0));
     setTimeout(() => process.exit(0), 3000).unref();
   });
