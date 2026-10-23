@@ -163,6 +163,7 @@ async function startRun(body = {}) {
     cancelRequested: false,
   });
 
+  log.info("run_start", { kind: "fast", target });
   const hw = hardware(true);
   const opts = {
     diskSizeMb: Number(body.diskSizeMb) || settings.diskSizeMb || 512,
@@ -213,6 +214,13 @@ async function startRun(body = {}) {
       state.finishedAt = Date.now();
       state.resultId = result.id;
       state.events.push({ at: Date.now(), type: "finished", resultId: result.id, status: state.status });
+      log.info("run_done", {
+        kind: "fast",
+        status: state.status,
+        composite: scores.composite,
+        wallMs: run.wallMs,
+        errors: run.errors.length,
+      });
 
       if (settings.autoSubmit && settings.leaderboardUrl) {
         try {
@@ -227,6 +235,7 @@ async function startRun(body = {}) {
       state.finishedAt = Date.now();
       state.error = String(err?.message || err);
       state.events.push({ at: Date.now(), type: "error", message: state.error });
+      log.error("run_error", { kind: "fast", message: state.error });
     }
   })();
 
@@ -262,6 +271,7 @@ async function startDeep(body = {}) {
     cancelRequested: false,
   });
 
+  log.info("run_start", { kind: "deep", target, durationSec, loadDisk });
   const hw = hardware(true);
 
   (async () => {
@@ -310,11 +320,19 @@ async function startDeep(body = {}) {
       state.resultId = result.id;
       state.progress = { durationSec, burnedSec: run.burnedSec, remainingSec: 0 };
       state.events.push({ at: Date.now(), type: "finished", resultId: result.id, status: state.status });
+      log.info("run_done", {
+        kind: "deep",
+        status: state.status,
+        verdict: run.stability?.verdict?.level,
+        stabilityPct: run.stability?.stability?.pct ?? null,
+        burnedSec: run.burnedSec,
+      });
     } catch (err) {
       state.status = "error";
       state.finishedAt = Date.now();
       state.error = String(err?.message || err);
       state.events.push({ at: Date.now(), type: "error", message: state.error });
+      log.error("run_error", { kind: "deep", message: state.error });
     }
   })();
 
@@ -590,6 +608,8 @@ export function start({ port = 0, socketPath = "" } = {}) {
     counter("niudao_process_errors_total", { kind: "unhandledRejection" });
   });
   const server = createServer();
+  server.keepAliveTimeout = 5000;
+  server.headersTimeout = 10000;
   return new Promise((resolve, reject) => {
     server.once("error", reject);
     const done = () => {
