@@ -2,7 +2,10 @@
 import { CLIENT_VERSION, SUITE_VERSION } from "../shared/scoring.js";
 import { loadSettings } from "./settings.js";
 
-const TIMEOUT = 8000;
+// 国内家宽到 Cloudflare 免费边缘的 TLS 握手偶有丢包（实测首包 2–8s），
+// 所以：单次 6 秒超时 + 最多重试 2 次；连接会被 undici 复用，重试通常很快。
+const TIMEOUT = 6000;
+const ATTEMPTS = 2;
 
 function baseUrl() {
   const { leaderboardUrl } = loadSettings();
@@ -10,9 +13,7 @@ function baseUrl() {
   return url;
 }
 
-async function call(pathname, { method = "GET", body, token } = {}) {
-  const base = baseUrl();
-  if (!base) throw new Error("NO_LEADERBOARD");
+async function callOnce(pathname, { method = "GET", body, token } = {}, base) {
   const res = await fetch(`${base}${pathname}`, {
     method,
     headers: {
@@ -34,6 +35,25 @@ async function call(pathname, { method = "GET", body, token } = {}) {
     throw new Error(msg);
   }
   return data;
+}
+
+/** 带重试的调用。只对网络层失败重试，HTTP 4xx/5xx 直接抛（那是业务错误，重试没意义）。 */
+async function call(pathname, opts = {}) {
+  const base = baseUrl();
+  if (!base) throw new Error("NO_LEADERBOARD");
+  let lastErr = null;
+  for (let attempt = 1; attempt <= ATTEMPTS; attempt += 1) {
+    try {
+      return await callOnce(pathname, opts, base);
+    } catch (err) {
+      lastErr = err;
+      const msg = String(err?.message || err);
+      const isNetwork = err?.name === "TimeoutError" || /fetch failed|ECONN|ENOTFOUND|ETIMEDOUT|network/i.test(msg);
+      if (!isNetwork || attempt === ATTEMPTS) break;
+      await new Promise((r) => setTimeout(r, 300));
+    }
+  }
+  throw lastErr;
 }
 
 export function isConfigured() {

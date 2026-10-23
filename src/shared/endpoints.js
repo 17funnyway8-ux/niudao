@@ -5,7 +5,7 @@
  * 换地址只需改这一处并重新打包；前端会用 /api/leaderboard 的健康检查显示在线状态，
  * 连不上时自动退化为本地成绩单，不会影响体检功能。
  */
-export const OFFICIAL_LEADERBOARD = "https://8790-agqvosnubdwfqzie6uwxtp26fm.instabox.tech";
+export const OFFICIAL_LEADERBOARD = "https://lb.1133891.xyz";
 
 /** 是否指向官方榜（用于界面上标一下来源） */
 export function isOfficial(url) {

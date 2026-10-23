@@ -53,6 +53,19 @@ npx wrangler deploy
 https://niudao-lb.<你的子域>.workers.dev
 ```
 
+**已上线的实例**：https://lb.1133891.xyz（自定义域名，绑在 Worker `niudao-lb` 上）。
+
+> `*.workers.dev` 在国内网络会被 DNS 污染（实测解析到 Dropbox 的 IP、TLS 超时），
+> 所以正式地址必须走自定义域名。绑定方式：
+>
+> ```bash
+> curl -X PUT "https://api.cloudflare.com/client/v4/accounts/<账号ID>/workers/domains" \
+>   -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" -H "content-type: application/json" \
+>   -d '{"zone_id":"<zone ID>","hostname":"lb.1133891.xyz","service":"niudao-lb","environment":"production"}'
+> ```
+>
+> 绑完约 10–30 秒生效（自动签证书），可用 `curl https://lb.1133891.xyz/api/v1/health` 验证。
+
 把这个地址填进应用（或改 `src/shared/endpoints.js` 的常量后重新打包），就切换过去了。
 想用自己的域名：Cloudflare 控制台 → Workers → 该 Worker → Settings → Domains & Routes → Add custom domain，
 它会自动签发证书（域名需要托管在同一个 CF 账号下）。

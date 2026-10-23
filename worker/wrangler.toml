@@ -6,7 +6,7 @@ compatibility_date = "2025-06-01"
 [[d1_databases]]
 binding = "DB"
 database_name = "niudao-lb"
-database_id = "00000000-0000-0000-0000-000000000000"
+database_id = "72c9506a-fc12-4561-8642-3dccbeb4787f"
 
 [observability]
 enabled = true

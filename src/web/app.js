@@ -556,6 +556,9 @@ function boardView() {
         <div class="row faint" style="font-size:11px;margin-top:4px"><span>${num(keys[0])} 分</span><span class="spacer"></span><span>${num(keys[keys.length - 1] + 99)} 分</span></div>`;
     })();
     const stats = data.stats || null;
+    const staleNote = data.stale
+      ? `<div class="hint-box" style="margin-bottom:12px;border-left-color:var(--warn);color:var(--warn)">${esc(data.warning || "数据可能不是最新")}</div>`
+      : "";
     const statsLine = stats
       ? stats.gated
         ? `<div class="hint-box" style="margin-bottom:12px">
@@ -572,6 +575,7 @@ function boardView() {
           : ""
       : "";
     body += `
+      ${staleNote}
       ${statsLine}
       ${
         me

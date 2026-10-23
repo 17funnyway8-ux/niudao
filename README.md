@@ -92,14 +92,14 @@ node build.mjs --pack        # 组装运行时 + 包体检 + fnpack build → pa
 
 | 后端 | 地址 | 特点 |
 |---|---|---|
-| Cloudflare Workers + D1 | `worker/`（部署后形如 `https://niudao-lb.<子域>.workers.dev`） | **永久在线**、无服务器、免费额度足够；推荐 |
+| Cloudflare Workers + D1 | **https://lb.1133891.xyz**（`worker/`） | **永久在线**、无服务器、免费额度足够；已内置为默认榜单 |
 | 自托管 Node + JSONL | `leaderboard/` | 数据在自己手里，适合内网/自有 VPS |
 
 两者 API 完全一致，客户端只改地址。当前内置的默认地址在 `src/shared/endpoints.js`，
 换地址改这一行 + 重新打包即可。
 
-临时演示实例（instabox 沙箱，会随沙箱休眠而离线）：
-https://8790-agqvosnubdwfqzie6uwxtp26fm.instabox.tech
+> 为什么不用 `*.workers.dev`：该域在国内网络被解析污染（返回 Dropbox 的 IP），必须挂自定义域名。
+> 绑自定义域名的命令：`curl -X PUT .../accounts/<id>/workers/domains -d '{"zone_id":"...","hostname":"lb.1133891.xyz","service":"niudao-lb","environment":"production"}'`
 
 ## 排行榜（自托管）
 

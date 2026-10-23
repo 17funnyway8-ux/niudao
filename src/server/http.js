@@ -340,6 +340,11 @@ async function startDeep(body = {}) {
   return { started: true, kind: "deep", durationSec };
 }
 
+// 榜单纯读缓存：CF 这条链路偶尔要几秒，短时间内重复看榜不该每次都等网络
+const boardCache = new Map(); // key -> { at, data }
+const BOARD_TTL_MS = 30_000;
+const BOARD_STALE_MS = 10 * 60_000;
+
 async function handleApi(req, res, url) {
   const { pathname } = url;
   const method = req.method || "GET";
@@ -525,6 +530,7 @@ async function handleApi(req, res, url) {
         me: latest ? { id: latest.id, value: latest.composite, rank: local.entries.findIndex((e) => e.id === latest.id) + 1 || null } : null,
       });
     }
+    const cacheKey = `${dim}|${arch}|${limit}`;
     try {
       // 取最近一次「快速档」成绩来算"我排第几"（深度档没有综合分）
       const latest =
@@ -537,8 +543,19 @@ async function handleApi(req, res, url) {
           : latest.scores?.dims?.[dim]?.score ?? latest.dims?.[dim]?.score ?? null
         : null;
       const data = await remote.leaderboard({ dim, arch, limit, score });
+      boardCache.set(cacheKey, { at: Date.now(), data });
       return json(res, 200, { mode: "remote", ...data });
     } catch (e) {
+      const hit = boardCache.get(cacheKey);
+      if (hit && Date.now() - hit.at < BOARD_STALE_MS) {
+        return json(res, 200, {
+          mode: "remote",
+          ...hit.data,
+          stale: true,
+          staleAgeSec: Math.round((Date.now() - hit.at) / 1000),
+          warning: `排行榜暂时连不上（${String(e.message || e)}），这是 ${Math.round((Date.now() - hit.at) / 1000)} 秒前的数据。`,
+        });
+      }
       return json(res, 502, { error: String(e.message || e) });
     }
   }
