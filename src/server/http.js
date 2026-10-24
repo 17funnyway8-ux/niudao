@@ -6,6 +6,7 @@ import http from "node:http";
 import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
+import { monitorEventLoopDelay } from "node:perf_hooks";
 import { fileURLToPath } from "node:url";
 
 import { snapshot } from "./hardware.js";
@@ -52,6 +53,19 @@ const state = {
 };
 
 let hwCache = { at: 0, value: null };
+
+// 成绩库统计是同步 SQLite 查询。磁盘测试（dd O_DIRECT 打满盘）期间，
+// 这个查询会被卡住几秒，把整个事件循环一起拖住。缓存 5 秒，别让 /api/health 变成暗坑。
+let storageCache = { at: 0, value: null };
+function storageInfoCached() {
+  // 体检期间不刷新：磁盘项用 dd O_DIRECT 打满盘，同步 SQLite 查询会被卡住几秒，
+  // 连带把整个事件循环拖死。跑步时就用手上这份旧的（总数字晚几秒更新没关系）。
+  const running = state.status === "running";
+  if (!storageCache.value || (!running && Date.now() - storageCache.at > 5000)) {
+    storageCache = { at: Date.now(), value: storageInfo() };
+  }
+  return storageCache.value;
+}
 function hardware(force = false) {
   if (!force && hwCache.value && Date.now() - hwCache.at < 30_000) return hwCache.value;
   hwCache = { at: Date.now(), value: snapshot({ targetDir: TARGET_DIR }) };
@@ -211,6 +225,7 @@ async function startRun(body = {}) {
         baselineSuite: baseline.suite,
       };
       appendResult(result);
+      storageCache = { at: 0, value: null };
       state.status = run.cancelled ? "cancelled" : "done";
       state.finishedAt = Date.now();
       state.resultId = result.id;
@@ -317,6 +332,7 @@ async function startDeep(body = {}) {
         caveats: run.stability.notes,
       };
       appendResult(result);
+      storageCache = { at: 0, value: null };
       state.status = run.cancelled ? "cancelled" : "done";
       state.phase = "done";
       state.finishedAt = Date.now();
@@ -444,7 +460,7 @@ async function handleApi(req, res, url) {
       status: state.status,
       kind: state.kind,
       uptimeSec,
-      storage: storageInfo(),
+      storage: storageInfoCached(),
       log: log.file(),
     });
   }
@@ -452,7 +468,7 @@ async function handleApi(req, res, url) {
   if (pathname === "/api/metrics") {
     gauge("niudao_run_active", {}, state.status === "running" ? 1 : 0);
     gauge("niudao_uptime_seconds", {}, Math.round(process.uptime()));
-    gauge("niudao_results_total", {}, storageInfo().total);
+    gauge("niudao_results_total", {}, storageInfoCached().total);
     gauge("niudao_memory_rss_bytes", {}, process.memoryUsage().rss);
     res.writeHead(200, { "content-type": "text/plain; version=0.0.4; charset=utf-8", "cache-control": "no-store" });
     return res.end(renderPrometheus());
@@ -770,6 +786,22 @@ export function start({ port = 0, socketPath = "" } = {}) {
   // 所以 25 秒喂一次，让绝大多数用户请求都走热连接。
   refreshEdgeHealth();
   setInterval(refreshEdgeHealth, 25_000).unref();
+
+  // 事件循环阻塞监控：体检时如果某项把主线程卡住，页面上的进度就会停住。
+  // 这个指标（+ 告警日志）用来盯住这件事，别再靠用户反馈"界面卡了"才发现。
+  const loopLag = monitorEventLoopDelay({ resolution: 250 });
+  loopLag.enable();
+  setInterval(() => {
+    const maxMs = loopLag.max / 1e6;
+    const p99 = loopLag.percentile(99) / 1e6;
+    gauge("niudao_event_loop_lag_ms", { kind: "p99" }, Math.round(p99 * 10) / 10);
+    gauge("niudao_event_loop_lag_ms", { kind: "max" }, Math.round(maxMs * 10) / 10);
+    if (maxMs > 800) {
+      log.warn("event_loop_blocked", { maxMs: Math.round(maxMs), stage: state.stage || null, status: state.status });
+      counter("niudao_event_loop_blocked_total", { stage: state.stage || "idle" });
+    }
+    loopLag.reset();
+  }, 2000).unref();
   process.on("uncaughtException", (err) => {
     log.error("uncaught_exception", { message: String(err?.message || err), stack: String(err?.stack || "").slice(0, 800) });
     counter("niudao_process_errors_total", { kind: "uncaughtException" });

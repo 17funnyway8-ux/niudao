@@ -3,9 +3,8 @@
  * 顺序刻意如此——先 CPU 后内存再磁盘，避免磁盘测试的缓存残留影响其它项。
  */
 import { cpuMulti, cpuSingle, scalingEfficiency } from "./bench/cpu.js";
-import { aesThroughput, zlibThroughput } from "./bench/crypto.js";
+import { runBenchJob } from "./bench/offload.js";
 import { diskRandom, diskSeq, prepareDir } from "./bench/disk.js";
-import { memBandwidth, memLatency } from "./bench/memory.js";
 
 export const STAGES = [
   { key: "cpu_single", label: "CPU 单核", hint: "让一个核心跑满，看你点开应用的响应速度" },
@@ -78,26 +77,27 @@ export async function runSuite({ targetDir, onEvent = () => {}, opts = {} }) {
     detail.scaling = scalingEfficiency(single?.mops, multi.mops, multi.detail.threads);
   }
 
-  await step(2, () => {
-    const aes = aesThroughput();
-    const z = zlibThroughput();
+  // 这两项都是同步的原生计算（OpenSSL / deflateSync / 随机访存），
+  // 放主线程会把 http 服务冻住 2–3 秒，所以整体丢进 worker 跑。
+  // 测量代码本身没变，分数与历史成绩可比。
+  await step(2, async () => {
+    const { aes, zlib: z } = await runBenchJob("crypto");
     metrics.crypto_aes = aes.mbs;
     metrics.zlib = z.mbs;
     detail.crypto = { ...aes.detail, ...z.detail };
     return true;
   });
 
-  await step(3, () => {
-    const bw = memBandwidth();
-    const lat = memLatency();
+  await step(3, async () => {
+    const { bw, lat } = await runBenchJob("memory");
     metrics.mem_copy = bw.gbs;
     metrics.mem_latency = lat.ns;
     detail.memory = { ...bw.detail, ...lat.detail };
     return true;
   });
 
-  await step(4, () => {
-    const seq = diskSeq(targetDir, { sizeMb: cfg.diskSizeMb });
+  await step(4, async () => {
+    const seq = await diskSeq(targetDir, { sizeMb: cfg.diskSizeMb });
     metrics.disk_seq_read = seq.read_mbs;
     metrics.disk_seq_write = seq.write_mbs;
     detail.disk_seq = seq.detail;
@@ -105,8 +105,8 @@ export async function runSuite({ targetDir, onEvent = () => {}, opts = {} }) {
     return true;
   });
 
-  await step(5, () => {
-    const rand = diskRandom(targetDir, { fileMb: cfg.diskFileMb, seconds: cfg.diskSeconds });
+  await step(5, async () => {
+    const rand = await diskRandom(targetDir, { fileMb: cfg.diskFileMb, seconds: cfg.diskSeconds });
     if (rand.read_iops) metrics.disk_rand_read = rand.read_iops;
     if (rand.write_iops) metrics.disk_rand_write = rand.write_iops;
     detail.disk_random = rand.detail;

@@ -21,7 +21,7 @@ test("CPU 内核：固定时限内完成迭代，吞吐为正且随负载变化"
 });
 
 test("单核测试两轮取优，多核吞吐高于单核", async () => {
-  const single = cpuSingle(180);
+  const single = await cpuSingle(180);
   assert.ok(single.mops > 0);
   const multi = await cpuMulti(220);
   assert.ok(multi.mops > single.mops, `多核 ${multi.mops} 应高于单核 ${single.mops}`);
@@ -36,18 +36,18 @@ test("内存：带宽为正、延迟在物理合理区间", () => {
   assert.ok(lat.ns >= 5 && lat.ns <= 5000, `延迟异常: ${lat.ns}ns`);
 });
 
-test("加密与压缩：吞吐量级合理、压缩率接近真实备份", () => {
-  const aes = aesThroughput(32, 16);
+test("加密与压缩：吞吐量级合理、压缩率接近真实备份", async () => {
+  const aes = await aesThroughput(32, 16);
   assert.ok(aes.mbs > 10, `AES 吞吐异常: ${aes.mbs}`);
-  const z = zlibThroughput(4);
+  const z = await zlibThroughput(4);
   assert.ok(z.mbs > 1, `zlib 吞吐异常: ${z.mbs}`);
   assert.ok(z.detail.ratio > 0.1 && z.detail.ratio <= 1, `压缩率异常: ${z.detail.ratio}`);
 });
 
-test("磁盘顺序：真实读写一个 64MB 文件，速率合理并清理临时文件", () => {
+test("磁盘顺序：真实读写一个 64MB 文件，速率合理并清理临时文件", async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "niudao-disk-"));
   try {
-    const r = diskSeq(dir, { sizeMb: 64 });
+    const r = await diskSeq(dir, { sizeMb: 64 });
     assert.ok(r.read_mbs > 1, `顺序读异常: ${r.read_mbs}`);
     assert.ok(r.write_mbs > 1, `顺序写异常: ${r.write_mbs}`);
     const leftovers = fs.readdirSync(dir).filter((f) => f.startsWith(".niudao"));
@@ -57,10 +57,10 @@ test("磁盘顺序：真实读写一个 64MB 文件，速率合理并清理临�
   }
 });
 
-test("磁盘 4K 随机：能跑出 IOPS；没有 python 时优雅降级为 null + 说明", () => {
+test("磁盘 4K 随机：能跑出 IOPS；没有 python 时优雅降级为 null + 说明", async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "niudao-rand-"));
   try {
-    const r = diskRandom(dir, { fileMb: 64, seconds: 1 });
+    const r = await diskRandom(dir, { fileMb: 64, seconds: 1 });
     if (r.read_iops === null) {
       assert.ok(r.caveats.length > 0, "跳过时必须给出原因");
     } else {

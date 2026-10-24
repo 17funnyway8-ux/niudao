@@ -1,5 +1,5 @@
 appname=niudao
-version=1.1.0
+version=1.1.1
 display_name=牛刀
 desc=给飞牛 NAS 做一次性能体检：CPU、内存、磁盘六项实测，出综合分与维度分，生成一份能贴到论坛的报告，并和别人的机器排进同一个天梯。
 source=thirdparty

@@ -51,6 +51,7 @@
 | 存储 | SQLite（`node:sqlite`，WAL）为主后端，主键查询 + 游标分页 + 保留策略（200/50 条）；老数据从 `results.jsonl` 自动迁移；Node < 22.5 自动退回 JSONL | Uptime Kuma / Beszel |
 | 可观测性 | `/api/metrics`（Prometheus 文本）+ 结构化 JSON 日志（`app.jsonl`）+ `uncaughtException` 兜底 + SIGTERM 优雅退出（先停测试再退出） | Netdata / Grafana |
 | 前端 | hash 深链（`#/result/<id>` 可分享可刷新）、明暗主题（跟随系统 + 手动切换）、图表十字线/tooltip/阈值线、稳定性逐轮柱图 | Grafana / Geekbench Browser |
+| 体检时界面不卡 | 所有重活都在 worker 里跑（CPU 单/多核、AES、zlib、内存访存），磁盘项走异步子进程；进程内自带事件循环阻塞监控（`niudao_event_loop_lag_ms`，>800ms 记一条 warn） | 3DMark（跑分时 UI 仍可交互） |
 
 ## 分数怎么理解
 
@@ -182,7 +183,7 @@ node leaderboard/server.js --port 8790
 | 设置 | `<数据目录>/settings.json` |
 | 榜单缓存 | `<数据目录>/board-cache.json`（最后一次成功拉到的榜，冷启动用来铺屏） |
 | 优选边缘 IP | `<数据目录>/cf-edge.json`（删掉就会重新探测） |
-| 指标 | `GET /api/metrics` |
+| 指标 | `GET /api/metrics`（含 `niudao_event_loop_lag_ms`：体检期间主线程有没有被卡住） |
 
 安装后数据目录 = `/var/apps/niudao/var`。
 

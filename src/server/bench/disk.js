@@ -3,7 +3,7 @@
  * 顺序：dd + O_DIRECT（绕过页缓存），失败则退化为带缓存并明确标注。
  * 4K 随机：调用 Python 助手（O_DIRECT + mmap 对齐缓冲），拿 QD1 IOPS。
  */
-import { spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -14,24 +14,80 @@ const HELPER = path.join(HERE, "random4k.py");
 const clock = () => process.hrtime.bigint();
 const secs = (a, b) => Number(b - a) / 1e9;
 
-function freeGb(dir) {
+/**
+ * 剩余空间 / 删测试文件都走异步 fs。
+ * 原来用 statfsSync / rmSync —— 磁盘被 dd 打满时，这两下能各卡好几秒，
+ * 主线程跟着冻住，页面上的进度条就定住了（实测 disk_seq 期间阻塞 3.9s）。
+ */
+async function freeGb(dir) {
   try {
-    const st = fs.statfsSync(dir);
+    const st = await fs.promises.statfs(dir);
     return (st.bavail * st.bsize) / 1024 ** 3;
   } catch {
     return 0;
   }
 }
 
-function runDd(args, timeoutMs) {
-  const r = spawnSync("dd", args, { encoding: "utf8", timeout: timeoutMs, env: { ...process.env, LC_ALL: "C" } });
-  return { ok: r.status === 0, status: r.status, stderr: (r.stderr || "").trim().slice(0, 300) };
+async function rmQuiet(file) {
+  try {
+    await fs.promises.rm(file, { force: true });
+  } catch {
+    /* 删不掉不影响结论 */
+  }
 }
 
-export function diskSeq(targetDir, { sizeMb = 512 } = {}) {
+/**
+ * 起子进程跑完再回来（异步）。
+ * 这里原来用 spawnSync —— 打盘的那十几秒会把整个 http 服务冻住，
+ * 进度轮询全超时，用户看到的就是"卡死"。dd / python 都是外部命令，
+ * 没有任何理由让主线程陪着等。
+ */
+function run(bin, args, timeoutMs) {
+  return new Promise((resolve) => {
+    let child;
+    try {
+      child = spawn(bin, args, { env: { ...process.env, LC_ALL: "C" } });
+    } catch (err) {
+      resolve({ ok: false, status: -1, stdout: "", stderr: String(err?.message || err) });
+      return;
+    }
+    let stdout = "";
+    let stderr = "";
+    let done = false;
+    const finish = (r) => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      resolve(r);
+    };
+    const timer = setTimeout(() => {
+      try {
+        child.kill("SIGKILL");
+      } catch {
+        /* 已经退出 */
+      }
+      finish({ ok: false, status: -1, stdout, stderr: `超时 ${timeoutMs}ms` });
+    }, timeoutMs);
+    child.stdout?.on("data", (c) => {
+      stdout += c;
+    });
+    child.stderr?.on("data", (c) => {
+      stderr += c;
+    });
+    child.on("error", (err) => finish({ ok: false, status: -1, stdout, stderr: String(err?.message || err) }));
+    child.on("close", (code) => finish({ ok: code === 0, status: code, stdout, stderr }));
+  });
+}
+
+async function runDd(args, timeoutMs) {
+  const r = await run("dd", args, timeoutMs);
+  return { ok: r.ok, status: r.status, stderr: (r.stderr || "").trim().slice(0, 300) };
+}
+
+export async function diskSeq(targetDir, { sizeMb = 512 } = {}) {
   const caveats = [];
   const file = path.join(targetDir, ".niudao-seq.bin");
-  const free = freeGb(targetDir);
+  const free = await freeGb(targetDir);
   let mb = sizeMb;
   if (free > 0 && free < (sizeMb / 1024) * 4 + 0.5) {
     mb = Math.max(64, Math.floor((free * 1024) / 4));
@@ -42,30 +98,30 @@ export function diskSeq(targetDir, { sizeMb = 512 } = {}) {
 
   // ---- 顺序写 ----
   let tw = clock();
-  let w = runDd(["if=/dev/zero", `of=${file}`, "bs=1M", `count=${mb}`, "oflag=direct", "conv=fdatasync", "status=none"], 180000);
+  let w = await runDd(["if=/dev/zero", `of=${file}`, "bs=1M", `count=${mb}`, "oflag=direct", "conv=fdatasync", "status=none"], 180000);
   if (!w.ok) {
     direct = false;
     caveats.push("文件系统不支持 O_DIRECT，顺序测试含页缓存影响，数值仅供参考");
     tw = clock();
-    w = runDd(["if=/dev/zero", `of=${file}`, "bs=1M", `count=${mb}`, "conv=fdatasync", "status=none"], 180000);
+    w = await runDd(["if=/dev/zero", `of=${file}`, "bs=1M", `count=${mb}`, "conv=fdatasync", "status=none"], 180000);
   }
   const writeSecs = secs(tw, clock());
   if (!w.ok) {
-    fs.rmSync(file, { force: true });
+    await rmQuiet(file);
     throw new Error(`顺序写失败: ${w.stderr || w.status}`);
   }
 
   // ---- 顺序读 ----
   let tr = clock();
-  let r = runDd([`if=${file}`, "of=/dev/null", "bs=1M", ...(direct ? ["iflag=direct"] : []), "status=none"], 180000);
+  let r = await runDd([`if=${file}`, "of=/dev/null", "bs=1M", ...(direct ? ["iflag=direct"] : []), "status=none"], 180000);
   if (!r.ok && direct) {
     direct = false;
     caveats.push("顺序读退化为带缓存模式");
     tr = clock();
-    r = runDd([`if=${file}`, "of=/dev/null", "bs=1M", "status=none"], 180000);
+    r = await runDd([`if=${file}`, "of=/dev/null", "bs=1M", "status=none"], 180000);
   }
   const readSecs = secs(tr, clock());
-  fs.rmSync(file, { force: true });
+  await rmQuiet(file);
   if (!r.ok) throw new Error(`顺序读失败: ${r.stderr || r.status}`);
 
   const round = (n) => Math.round(n * 10) / 10;
@@ -77,7 +133,7 @@ export function diskSeq(targetDir, { sizeMb = 512 } = {}) {
   };
 }
 
-function pythonBin() {
+async function pythonBin() {
   const candidates = [
     process.env.NIUDAO_PYTHON,
     "python3",
@@ -85,27 +141,27 @@ function pythonBin() {
     "/usr/bin/python3",
   ].filter(Boolean);
   for (const bin of candidates) {
-    const r = spawnSync(bin, ["-c", "import os,mmap;print(1)"], { encoding: "utf8", timeout: 8000 });
+    const r = await run(bin, ["-c", "import os,mmap;print(1)"], 8000);
     if (r.status === 0) return bin;
   }
   return null;
 }
 
-export function diskRandom(targetDir, { fileMb = 512, seconds = 6 } = {}) {
+export async function diskRandom(targetDir, { fileMb = 512, seconds = 6 } = {}) {
   const caveats = [];
-  const bin = pythonBin();
+  const bin = await pythonBin();
   if (!bin) {
     return { read_iops: null, write_iops: null, detail: { skipped: "no-python" }, caveats: ["找不到可用的 python3，4K 随机 IO 未测（该项不计入分数）"] };
   }
   const file = path.join(targetDir, ".niudao-rand.bin");
-  const free = freeGb(targetDir);
+  const free = await freeGb(targetDir);
   let mb = fileMb;
   if (free > 0 && free < (fileMb / 1024) * 3 + 0.5) {
     mb = Math.max(128, Math.floor((free * 1024) / 3));
     caveats.push(`可用空间不足，随机测试文件缩小到 ${mb}MB`);
   }
   const args = [HELPER, "--path", file, "--file-mb", String(mb), "--seconds", String(seconds)];
-  let out = spawnSync(bin, args, { encoding: "utf8", timeout: (seconds * 2 + 120) * 1000 });
+  const out = await run(bin, args, (seconds * 2 + 120) * 1000);
   let parsed = null;
   try {
     parsed = JSON.parse((out.stdout || "").trim());
@@ -114,7 +170,7 @@ export function diskRandom(targetDir, { fileMb = 512, seconds = 6 } = {}) {
   }
   if (!parsed || parsed.error) {
     // 有些文件系统（少数网络/特殊挂载）不支持 O_DIRECT，退化再试一次
-    const retry = spawnSync(bin, [...args, "--no-direct"], { encoding: "utf8", timeout: (seconds * 2 + 120) * 1000 });
+    const retry = await run(bin, [...args, "--no-direct"], (seconds * 2 + 120) * 1000);
     try {
       parsed = JSON.parse((retry.stdout || "").trim());
       if (parsed) caveats.push("O_DIRECT 失败已退化为带缓存模式，随机 IO 数值偏乐观");
@@ -123,7 +179,7 @@ export function diskRandom(targetDir, { fileMb = 512, seconds = 6 } = {}) {
       parsed = null;
     }
   }
-  fs.rmSync(file, { force: true });
+  await rmQuiet(file);
   return {
     read_iops: parsed?.rand_read_iops ?? null,
     write_iops: parsed?.rand_write_iops ?? null,

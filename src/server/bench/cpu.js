@@ -1,26 +1,26 @@
-/** CPU：单核 / 多核。多核用 worker_threads，各线程各自计时，汇总吞吐。 */
+/**
+ * CPU：单核 / 多核，两者都跑在 worker_threads 里。
+ * 单核曾经在主线程跑 —— 那会让整个 http 服务冻住两轮共 ~10 秒，
+ * 用户看到的就是"点了开始体检，页面卡死"。计算放 worker，主线程继续服务进度轮询。
+ * 实测两种跑法差异 -0.2%（噪声级），所以基准不需要重算。
+ */
 import os from "node:os";
 import { Worker } from "node:worker_threads";
 import { fileURLToPath } from "node:url";
-import { kernelWork, warmup, OPS_PER_ITER } from "./kernel.js";
+import { OPS_PER_ITER } from "./kernel.js";
 
 const WORKER = fileURLToPath(new URL("./worker.js", import.meta.url));
 
-export function cpuSingle(durationMs = 6000) {
-  warmup();
-  const best = [];
-  // 跑两轮取好的一轮：抵消偶发调度抖动
-  for (let i = 0; i < 2; i += 1) {
-    const r = kernelWork(durationMs);
-    best.push(r.mops);
-  }
-  const mops = Math.max(...best);
-  return { mops, detail: { rounds: 2, opsPerIter: OPS_PER_ITER } };
+/** 单核：跑两轮取好的一轮，抵消偶发调度抖动（全部在 worker 里完成） */
+export async function cpuSingle(durationMs = 6000) {
+  const r = await runWorker(durationMs, { rounds: 2, warmupMs: 350 });
+  const mops = (r.iters * OPS_PER_ITER) / 1e6 / (r.elapsed / 1000);
+  return { mops, detail: { rounds: 2, opsPerIter: OPS_PER_ITER, inWorker: true, iters: r.allIters } };
 }
 
-function runWorker(durationMs) {
+function runWorker(durationMs, extra = {}) {
   return new Promise((resolve, reject) => {
-    const w = new Worker(WORKER, { workerData: { durationMs } });
+    const w = new Worker(WORKER, { workerData: { durationMs, ...extra } });
     let settled = false;
     w.once("message", (m) => {
       settled = true;
