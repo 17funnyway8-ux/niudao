@@ -1,6 +1,6 @@
 {
   "name": "niudao",
-  "version": "2.1.0",
+  "version": "2.1.1",
   "private": true,
   "type": "module",
   "description": "牛刀 · 飞牛 fnOS 性能天梯：NAS 性能体检 + 排行榜",
@@ -9,7 +9,7 @@
   },
   "scripts": {
     "dev": "node src/server/index.js --port 7788",
-    "test": "node --test test/scoring.test.js test/schema.test.js test/stability.test.js test/leaderboard.test.js test/http.test.js test/bench.test.js test/deep.test.js test/storage.test.js test/remote.test.js test/edge.test.js test/runner.test.js test/feedback.test.js worker/test/worker.test.js",
+    "test": "node --test test/scoring.test.js test/schema.test.js test/stability.test.js test/leaderboard.test.js test/http.test.js test/bench.test.js test/deep.test.js test/storage.test.js test/remote.test.js test/edge.test.js test/runner.test.js test/feedback.test.js test/hardware.test.js worker/test/worker.test.js",
     "build": "node build.mjs",
     "pack": "node build.mjs --pack",
     "lb": "node leaderboard/server.js",

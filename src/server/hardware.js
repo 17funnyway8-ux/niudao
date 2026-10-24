@@ -119,55 +119,41 @@ function board() {
 const PCI_VENDORS = { "0x8086": "Intel", "0x1002": "AMD", "0x10de": "NVIDIA", "0x1a03": "ASPEED", "0x5143": "Qualcomm" };
 
 /**
- * 显卡识别：优先给"人能看懂的产品名"。
+ * 显卡名称：直接用飞牛系统自己的清单，不自己维护映射表。
  *
- * 数据来源优先级（越靠前越准）：
- *  1. lspci -mm 的型号字符串（x86 上有 PCI 数据库时最好用）
- *  2. /sys/class/drm 里每张卡的 vendor/device ID → 查常见 ID 表
- *  3. DRM 驱动的 name 属性（AMD/Intel 会给出比较可读的名字）
- *  4. 内核驱动名兜底（i915 / amdgpu / nvidia / xe）
+ * 飞牛在 /usr/trim/etc/gpu_device_info.json 里已经有整份 PCI 厂商/设备/子设备 → 产品名
+ * 的映射（141 KB，来自 trim 自己的驱动支持清单），系统页面上显示的就是这份。
+ * 我再手写一张"常见 ID 表"只会漏掉冷门卡，而且和系统显示对不上。
  *
- * 核显要额外处理：Intel/AMD 的核显在部分主板上不会出现在 /sys/class/drm，
- * 但 CPU 型号里已经写明了（如 "Ryzen 7 5825U with Radeon Graphics"），
- * 这种情况直接从 CPU 型号推断，避免显示成"未识别"。
+ * 结构：{ "<vendorHex>": { "<deviceHex>": { "<subsystemOrRevision>": { "name": "..." } } } }
+ * 子键含义：多数是子设备 ID 的高两位/低两位组合，也可能是 revision；
+ * 取不到精确子键时，任取一个（同 device 下的 name 基本一致）。
  */
+const FNOS_GPU_DB = "/usr/trim/etc/gpu_device_info.json";
+let gpuDbCache = null;
 
-/** 常见的核显/独显 PCI ID → 产品名（只收 NAS 上高频出现的这几类） */
-const PCI_DEVICE_NAMES = {
-  // Intel 核显（UHD/Iris Xe 世代）
-  "0x3e9b": "Intel UHD Graphics 630",
-  "0x3e92": "Intel UHD Graphics 630",
-  "0x4692": "Intel Iris Xe Graphics",
-  "0x46a6": "Intel Iris Xe Graphics",
-  "0x46d0": "Intel Iris Xe Graphics",
-  "0x4e61": "Intel UHD Graphics (11th)",
-  "0xa780": "Intel UHD Graphics 770",
-  "0x7d40": "Intel Graphics (Meteor Lake)",
-  // NVIDIA 常见独显/Tesla
-  "0x24b8": "NVIDIA GeForce RTX 2050 / MX570",
-  "0x2204": "NVIDIA GeForce RTX 3090",
-  "0x2482": "NVIDIA GeForce RTX 3060 Ti",
-  "0x2504": "NVIDIA GeForce RTX 3060",
-  "0x1f95": "NVIDIA GeForce GTX 1650",
-  "0x1eb8": "NVIDIA Tesla T4",
-  "0x2184": "NVIDIA GeForce GTX 1660",
-  // AMD 核显
-  "0x15e7": "AMD Radeon Graphics (APU)",
-  "0x1638": "AMD Radeon Graphics (APU)",
-  "0x164c": "AMD Radeon 680M",
-  "0x15bf": "AMD Radeon 660M",
-};
-
-function gpuModelFallback(cpuModel = "") {
-  // 从 CPU 型号里读出"集成显卡"的名字
-  const m = cpuModel.match(/with\s+(Radeon[^,)/]*?Graphics[^,)]*|Intel[^,)]*Graphics[^,)]*|Iris[^,)]*Xe[^,)]*)/i);
-  if (m) return m[1].replace(/\s+/g, " ").trim();
-  if (/Apple\s*(Silicon|M\d)/i.test(cpuModel)) return "Apple GPU（统一内存）";
-  if (/Cortex-A|ARMv8/i.test(cpuModel)) return "ARM Mali / 集成 GPU";
-  return "";
+function loadFnOsGpuDb() {
+  if (gpuDbCache !== null) return gpuDbCache;
+  try {
+    gpuDbCache = JSON.parse(fs.readFileSync(FNOS_GPU_DB, "utf8"));
+  } catch {
+    gpuDbCache = {};
+  }
+  return gpuDbCache;
 }
 
-function gpu(cpuModel = "") {
+/** 在飞牛清单里查产品名。取不到返回空串（交给上层决定怎么退化）。 */
+export function gpuNameFromFnOS(vendorHex, deviceHex) {
+  const db = loadFnOsGpuDb();
+  const vendor = db[vendorHex?.toUpperCase()] || db[vendorHex?.toLowerCase()];
+  if (!vendor) return "";
+  const dev = vendor[deviceHex?.toUpperCase()] || vendor[deviceHex?.toLowerCase()];
+  if (!dev) return "";
+  const first = dev["0000"] || dev["00"] || Object.values(dev)[0];
+  return (first && first.name) || "";
+}
+
+function gpu() {
   const drm = (() => {
     try {
       return fs.readdirSync("/sys/class/drm");
@@ -182,29 +168,35 @@ function gpu(cpuModel = "") {
     const vendor = read(`${base}/vendor`);
     const device = read(`${base}/device`);
     if (!vendor) continue;
-    const vname = PCI_VENDORS[vendor.toLowerCase()] || vendor;
-    const devId = device ? device.toLowerCase() : "";
-    const driverMatch = (read(`${base}/uevent`) || "").match(/DRIVER=(\S+)/);
-    const driver = driverMatch ? driverMatch[1] : "";
-    // 1) 已知 ID 表
-    let label = PCI_DEVICE_NAMES[devId] || "";
-    // 2) DRM 驱动自报的名字（AMD/Intel 的 drm 有 product_name / name）
+    const vendorHex = vendor.replace(/^0x/i, "").toLowerCase();
+    const deviceHex = (device || "").replace(/^0x/i, "").toLowerCase();
+    // 1) 飞牛系统自己的产品名清单（系统页面上显示的就是这个）
+    let label = gpuNameFromFnOS(vendorHex, deviceHex);
+    // 2) 清单里没有的（虚拟显卡、非常新的卡）：用内核驱动给的可读名，
+    //    再不行就报"厂商 + 驱动"，不编造型号。
     if (!label) {
-      label = read(`${base}/product_name`) || read(`${base}/drm/${card}/device/product_name`) || "";
+      const driverMatch = (read(`${base}/uevent`) || "").match(/DRIVER=(\S+)/);
+      const driver = driverMatch ? driverMatch[1] : "";
+      const driverLabel = {
+        amdgpu: "AMD 显卡",
+        i915: "Intel 显卡",
+        xe: "Intel Arc 显卡",
+        nvidia: "NVIDIA 显卡",
+        nouveau: "NVIDIA 显卡（开源驱动）",
+        "bochs-drm": "虚拟显卡（QEMU）",
+        virtio_gpu: "虚拟显卡（virtio）",
+        vkms: "虚拟显卡（无头）",
+        "radeon": "AMD 显卡（旧驱动）",
+      }[driver];
+      const vendorName = PCI_VENDORS[`0x${vendorHex}`] || "";
+      label = driverLabel || (vendorName ? `${vendorName} 显卡` : "");
     }
-    // 3) 兜底：厂商 + 可读驱动名，而不是裸的 0x 代号
-    if (!label) {
-      const driverLabel = { amdgpu: "AMD Radeon", i915: "Intel Graphics", xe: "Intel Arc Graphics", nvidia: "NVIDIA GPU", nouveau: "NVIDIA GPU（开源驱动）", "bochs-drm": "虚拟显卡（Bochs/QEMU）", virtio_gpu: "虚拟显卡（virtio）", vkms: "虚拟显卡（无头）" }[driver];
-      label = driverLabel || `${vname} 显卡`;
-    }
-    if (names.includes(label)) continue; // 多显示器时同一张卡会重复出现
+    if (!label) continue;
+    // 同一张卡会有多个 DRM 节点（card0 / card0-DP-1 等），去重
+    if (names.includes(label)) continue;
     names.push(label);
   }
-  if (names.length) return names.join(" / ");
-
-  // 没有 /sys/class/drm 信息：从 CPU 型号推断核显
-  const integrated = gpuModelFallback(cpuModel);
-  return integrated || "";
+  return names.join(" / ");
 }
 
 function mounts() {
@@ -333,7 +325,7 @@ export function snapshot(opts = {}) {
     os_version: osVersion(),
     kernel: os.release(),
     board: board(),
-    gpu: gpu(cpu.model),
+    gpu: gpu(),
     volume: target,
     disks: vols.map((v) => `${v.mount} ${v.fstype} ${v.size_gb}GB${v.kind ? ` ${v.kind}` : ""}`),
   };
