@@ -8,7 +8,7 @@
  */
 
 export const SUITE_VERSION = "1.0.0";
-export const CLIENT_VERSION = "1.3.1";
+export const CLIENT_VERSION = "1.3.2";
 
 /** 原始指标定义：unit 展示用，better 决定除法方向 */
 export const METRICS = {

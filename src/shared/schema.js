@@ -21,9 +21,26 @@ export const PLAUSIBLE = {
 const str = (v, max = 120) =>
   typeof v === "string" ? v.replace(/[\u0000-\u001f\u007f]/g, "").trim().slice(0, max) : "";
 
+/** 通用文本清洗：去掉控制字符、双向/零宽字符、HTML 敏感字符，再按字符数截断 */
+export function cleanText(raw, max = 120) {
+  const s = str(raw, max * 2)
+    .replace(/[\u0000-\u001f\u007f]/g, "")
+    .replace(/[<>"'`\\/]/g, "")
+    .replace(/[\u200b-\u200f\u202a-\u202e\u2060-\u2064\ufeff]/g, "")
+    .trim();
+  return Array.from(s).slice(0, max).join("");
+}
+
 export function sanitizeAlias(raw) {
-  const s = str(raw, 32).replace(/[<>"'`\\/]/g, "");
-  return s.slice(0, 16);
+  // 1) 去掉 ASCII 控制字符（尤其是 \r \n：别名会被写进 JSONL/日志，换行能伪造出假记录）
+  // 2) 去掉 HTML/脚本敏感字符
+  // 3) 去掉双向控制符与零宽字符：U+202E 之类能把显示顺序反转，冒充别人或藏字符
+  const s = str(raw, 32)
+    .replace(/[\u0000-\u001f\u007f]/g, "")
+    .replace(/[<>"'`\\/]/g, "")
+    .replace(/[\u200b-\u200f\u202a-\u202e\u2060-\u2064\ufeff]/g, "")
+    .trim();
+  return Array.from(s).slice(0, 16).join("");
 }
 
 const num = (v) => (typeof v === "number" && Number.isFinite(v) ? v : null);
@@ -45,7 +62,16 @@ export function validateSubmission(input) {
   const arch = str(input.arch, 20);
   if (!["x64", "arm64", "ia32", "arm"].includes(arch)) errors.push(`arch 不支持: ${arch || "(空)"}`);
 
-  const hw = input.hardware && typeof input.hardware === "object" ? input.hardware : {};
+  // hardware 里的自由文本会原样出现在公开榜单上，和别名走同一套清洗规则
+  const rawHw = input.hardware && typeof input.hardware === "object" ? input.hardware : {};
+  const hw = {
+    ...rawHw,
+    cpu_model: cleanText(rawHw.cpu_model, 120),
+    board: cleanText(rawHw.board, 120),
+    gpu: cleanText(rawHw.gpu, 120),
+    os_version: cleanText(rawHw.os_version, 32),
+    kernel: cleanText(rawHw.kernel, 64),
+  };
   const hardware = {
     cpu_model: str(hw.cpu_model, 96) || "Unknown CPU",
     cores: num(hw.cores) ?? 0,
@@ -56,8 +82,9 @@ export function validateSubmission(input) {
     kernel: str(hw.kernel, 60),
     board: str(hw.board, 96),
     gpu: str(hw.gpu, 96),
-    volume: str(hw.volume, 64),
-    disks: Array.isArray(hw.disks) ? hw.disks.slice(0, 24).map((d) => str(d, 64)).filter(Boolean) : [],
+    // 注意：volume / disks 是**客户端本地算分用的**，不进提交体。
+    // 之前这里还会从 input 里收，结果榜单接口把用户的卷路径与磁盘布局原样
+    // 露出了（已修）。服务端不需要它们：分数是拿 metrics 重算的。
   };
   if (hardware.threads < 1) errors.push("hardware.threads 必须 >= 1");
   if (hardware.mem_gb < 1) errors.push("hardware.mem_gb 必须 >= 1");

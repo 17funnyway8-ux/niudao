@@ -751,13 +751,29 @@ async function handleApi(req, res, url) {
       if (!path.isAbsolute(dir)) {
         return json(res, 400, { error: "测试目录必须是绝对路径，例如 /vol1/@appdata/niudao" });
       }
-      let stat = null;
+      // 先确认"是个目录"（提示更准确），再解析真实路径挡住符号链接绕过
+      let stat0 = null;
       try {
-        stat = fs.statSync(dir);
+        stat0 = fs.statSync(dir);
       } catch {
         return json(res, 400, { error: `测试目录不存在：${dir}（请先创建，或换成已存在的卷目录）` });
       }
-      if (!stat.isDirectory()) return json(res, 400, { error: `不是目录：${dir}` });
+      if (!stat0.isDirectory()) return json(res, 400, { error: `不是目录：${dir}` });
+
+      let realDir = dir;
+      try {
+        realDir = fs.realpathSync(dir);
+      } catch {
+        return json(res, 400, { error: `测试目录不存在：${dir}（请先创建，或换成已存在的卷目录）` });
+      }
+      if (realDir !== dir) {
+        return json(res, 400, { error: `测试目录不能是符号链接：${dir} → ${realDir}（请填真实路径）` });
+      }
+      // 系统性目录一律拒绝：体检只会往这里写大文件，没有正当理由
+      const DENY = ["/etc", "/usr", "/bin", "/sbin", "/lib", "/lib64", "/boot", "/proc", "/sys", "/dev", "/root"];
+      if (DENY.some((d) => realDir === d || realDir.startsWith(`${d}/`))) {
+        return json(res, 400, { error: `这个目录不能做测试卷（系统目录）：${realDir}` });
+      }
       try {
         fs.accessSync(dir, fs.constants.W_OK);
       } catch {
@@ -1014,8 +1030,29 @@ export async function shutdown({ timeoutMs = 8000 } = {}) {
   return { status: state.status, elapsedMs: Date.now() - started };
 }
 
+/**
+ * 统一安全响应头。这套页面没有内联脚本/内联样式（都是外链文件），
+ * 所以 CSP 可以收紧到 self，不需要 unsafe-inline —— 万一有人往渲染里塞了
+ * 未转义的字符串，浏览器也不会执行。
+ */
+const SECURITY_HEADERS = {
+  "content-security-policy":
+    "default-src 'self'; img-src 'self' data: blob:; style-src 'self'; script-src 'self'; connect-src 'self'; " +
+    "object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'self'",
+  "x-content-type-options": "nosniff",
+  "referrer-policy": "no-referrer",
+  "x-frame-options": "SAMEORIGIN",
+};
+
+function applySecurityHeaders(res) {
+  for (const [k, v] of Object.entries(SECURITY_HEADERS)) {
+    if (!res.hasHeader(k)) res.setHeader(k, v);
+  }
+}
+
 export function createServer() {
   return http.createServer((req, res) => {
+    applySecurityHeaders(res);
     const started = process.hrtime.bigint();
     const url = new URL(req.url || "/", "http://localhost");
     // 网关前缀（/app/niudao）在这里一次性剥掉，后面所有路由都按不带前缀的路径处理

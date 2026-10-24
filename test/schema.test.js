@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { sanitizeAlias, validateSubmission } from "../src/shared/schema.js";
+import * as schema from "../src/shared/schema.js";
+
+const { sanitizeAlias, validateSubmission } = schema;
 
 const good = () => ({
   suite: "1.0.0",
@@ -69,4 +71,35 @@ test("metrics 里的非数字/NaN 被丢弃而不是变成 NaN 入库", () => {
   assert.ok(r.ok);
   assert.equal(r.value.metrics.zlib, undefined);
   assert.equal(r.value.metrics.mem_copy, undefined);
+});
+
+test("别名与硬件文本清洗：去掉控制字符、零宽/双向符，防止伪造日志与显示混淆", () => {
+  const { cleanText } = schema;
+  assert.equal(sanitizeAlias('x\r\n{"injected":true}'), 'x{injected:true}', "换行必须去掉，否则能伪造 JSONL 记录");
+  assert.equal(sanitizeAlias("a\u0000b"), "ab");
+  assert.equal(sanitizeAlias("abc\u202Edef"), "abcdef", "双向覆盖符能反转显示，冒充别人");
+  assert.equal(sanitizeAlias("ab\u200Bcd"), "abcd", "零宽字符能藏字");
+  assert.equal(cleanText("AMD \u202Eevil<script>", 60), "AMD evilscript");
+  // 中文/emoji 按字符截断，不按字节
+  assert.equal(Array.from(sanitizeAlias("🐮".repeat(20))).length, 16);
+});
+
+test("提交体不接受 volume / disks：它们是本地算分用的，不该传也不该存", () => {
+  // 直接构造一个"老客户端"的提交，带上卷路径与磁盘信息
+  const input = {
+    suite: "1.0.0",
+    client: "1.3.1",
+    fingerprint: "aaaabbbb11112222",
+    arch: "x64",
+    alias: "test",
+    hardware: { cpu_model: "X", threads: 8, mem_gb: 16, volume: "/vol1/@appdata/niudao", disks: ["/vol1 btrfs 1788GB"] },
+    metrics: { cpu_single: 100, cpu_multi: 200, crypto_aes: 300, zlib: 10, mem_copy: 5, mem_latency: 100, disk_seq_read: 100, disk_seq_write: 100 },
+    ts: Date.now(),
+  };
+  const r = schema.validateSubmission(input);
+  assert.equal(r.ok, true);
+  assert.ok(r.value.hardware, "清洗后的 hardware 必须带回来（否则榜单拿不到 CPU 型号）");
+  assert.ok(!("volume" in r.value.hardware), "volume 不能被接受");
+  assert.ok(!("disks" in r.value.hardware), "disks 不能被接受");
+  assert.equal(r.value.hardware.cpu_model, "X");
 });
