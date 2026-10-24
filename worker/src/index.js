@@ -9,11 +9,13 @@
  *   GET  /api/v1/machine/:fingerprint
  *   DELETE /api/v1/entry/:id          （需 ADMIN_TOKEN）
  *   GET  /                             公开榜单页
+ *   POST /api/feedback                用户反馈（含脱敏日志）
  *
  * 设计取舍：只收原始指标，分数一律服务端重算；排名用 D1 的 COUNT + OFFSET 现算，
  * 不维护冗余排名表（家用/社区规模足够，省掉一致性问题）。
  */
 import { validateSubmission } from "../../src/shared/schema.js";
+import { handleFeedback } from "./feedback.js";
 import { SUITE_VERSION, computeScores, gradeOf } from "../../src/shared/scoring.js";
 import { baselines as baselinesFile, pageHtml } from "./assets.js";
 import {
@@ -60,6 +62,7 @@ export default {
 
     try {
       if (pathname === "/api/v1/health") return await health(env);
+      if (pathname === "/api/feedback" || pathname.startsWith("/api/feedback/")) return await handleFeedback(request, env, url);
       if (pathname === "/api/v1/submit" && request.method === "POST") return await submit(request, env);
       if (pathname === "/api/v1/leaderboard") return await leaderboard(url, env);
       if (pathname === "/api/v1/stats") return await stats(env);

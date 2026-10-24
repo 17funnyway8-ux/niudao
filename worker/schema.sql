@@ -26,3 +26,22 @@ CREATE INDEX IF NOT EXISTS idx_entries_cpu ON entries (suite, arch, cpu DESC);
 CREATE INDEX IF NOT EXISTS idx_entries_mem ON entries (suite, arch, memory DESC);
 CREATE INDEX IF NOT EXISTS idx_entries_disk ON entries (suite, arch, storage DESC);
 CREATE INDEX IF NOT EXISTS idx_entries_fp ON entries (fingerprint);
+
+-- 用户反馈（含脱敏日志）。只存脱敏后的文本，不存原始日志。v1.3.0 起
+CREATE TABLE IF NOT EXISTS feedback (
+  id          TEXT PRIMARY KEY,
+  received_at INTEGER NOT NULL,
+  version     TEXT,
+  fs_os       TEXT,
+  arch        TEXT,
+  cpu_model   TEXT,
+  mem_gb      REAL,
+  contact     TEXT,
+  message     TEXT NOT NULL,
+  report      TEXT,            -- 完整反馈包（服务端已二次脱敏）
+  ctx         TEXT,            -- 页面现场（哪一页、点了什么、报了什么错）
+  ip          TEXT             -- 仅用于限流，不对外展示
+);
+
+CREATE INDEX IF NOT EXISTS idx_feedback_time ON feedback (received_at DESC);
+CREATE INDEX IF NOT EXISTS idx_feedback_ip ON feedback (ip, received_at DESC);

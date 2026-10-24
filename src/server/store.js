@@ -405,3 +405,35 @@ export function storageInfo() {
     deep: s.count("deep"),
   };
 }
+
+/* ------------------------------------------------- 反馈（本机留档） */
+
+const FEEDBACK_FILE = () => path.join(PATHS.data, "feedback.jsonl");
+
+/** 追加一条反馈留档。连不上云端时这就是唯一副本，所以写失败要让它冒出来。 */
+export function appendFeedback(entry) {
+  ensureDataDir();
+  fs.appendFileSync(FEEDBACK_FILE(), `${JSON.stringify(entry)}\n`);
+  return entry;
+}
+
+export function listFeedback(limit = 30) {
+  try {
+    return fs
+      .readFileSync(FEEDBACK_FILE(), "utf8")
+      .split("\n")
+      .filter(Boolean)
+      .map((l) => {
+        try {
+          return JSON.parse(l);
+        } catch {
+          return null;
+        }
+      })
+      .filter(Boolean)
+      .sort((a, b) => b.received_at - a.received_at)
+      .slice(0, limit);
+  } catch {
+    return [];
+  }
+}

@@ -38,6 +38,8 @@ export function medianCI(sortedAsc) {
 export class Store {
   constructor(file) {
     this.file = file;
+    // 反馈单独一个文件：它和成绩不是一个生命周期，别混在一起
+    this.feedbackFile = path.join(path.dirname(file), "feedback.jsonl");
     this.all = [];
     this.best = new Map(); // `${fingerprint}|${suite}` -> entry
     fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -185,6 +187,34 @@ export class Store {
     return this.all
       .filter((e) => e.fingerprint === fingerprint)
       .sort((a, b) => (b.ts || 0) - (a.ts || 0));
+  }
+
+  /** 反馈：追加一行 JSONL，字段都在服务端脱敏过 */
+  addFeedback(entry) {
+    fs.appendFileSync(this.feedbackFile, `${JSON.stringify(entry)}\n`);
+    return entry;
+  }
+
+  listFeedback(limit = 30) {
+    let raw = "";
+    try {
+      raw = fs.readFileSync(this.feedbackFile, "utf8");
+    } catch {
+      return [];
+    }
+    return raw
+      .split("\n")
+      .filter(Boolean)
+      .map((l) => {
+        try {
+          return JSON.parse(l);
+        } catch {
+          return null;
+        }
+      })
+      .filter(Boolean)
+      .sort((a, b) => b.received_at - a.received_at)
+      .slice(0, limit);
   }
 
   remove(id) {

@@ -12,12 +12,13 @@ import { fileURLToPath } from "node:url";
 import { snapshot } from "./hardware.js";
 import { STAGES, runSuite } from "./runner.js";
 import { DEEP_LIMITS, normalizeDuration, runDeep } from "./deep.js";
-import { appendResult, deleteResult, getResult, listResults, localRank, pageResults, storageInfo, updateResult } from "./store.js";
+import { appendFeedback, appendResult, deleteResult, getResult, listFeedback, listResults, localRank, pageResults, storageInfo, updateResult } from "./store.js";
 import { counter, gauge, observe, renderPrometheus } from "./metrics.js";
 import { initLogger, log } from "./log.js";
 import { buildCard, buildMarkdown } from "./report.js";
 import { PATHS, loadBaselines, loadSettings, saveSettings, TARGET_DIR, ensureDataDir } from "./settings.js";
 import * as remote from "./remote.js";
+import { buildReport } from "./feedback.js";
 import { CLIENT_VERSION, DIMENSIONS, METRICS, SUITE_VERSION, computeScores, gradeOf, headline } from "../shared/scoring.js";
 import { OFFICIAL_LEADERBOARD, isOfficial } from "../shared/endpoints.js";
 
@@ -499,6 +500,25 @@ function persistBoardCache() {
   boardSaveTimer.unref?.();
 }
 
+/** 反馈包里带的环境摘要：够定位问题，但不含隐私（脱敏在 buildReport 里统一做） */
+function feedbackEnv(result) {
+  const hw = hardware()?.hardware || result?.hardware || {};
+  return {
+    version: CLIENT_VERSION,
+    suite: SUITE_VERSION,
+    fnOS: hw.os_version || "",
+    kernel: hw.kernel || "",
+    arch: result?.arch || hw.arch || "",
+    cpu: hw.cpu_model || "",
+    threads: hw.threads || "",
+    "mem(GB)": hw.mem_gb || "",
+    "榜单地址": loadSettings().leaderboardUrl || "(未配置)",
+    "榜单边缘IP": remote.pinnedEdge() || "(未钉)",
+    "已测次数": listResults(500).length,
+    "运行时长(分)": Math.round(process.uptime() / 60),
+  };
+}
+
 function num1(n) {
   return Number(n).toLocaleString("zh-CN", { maximumFractionDigits: 1 });
 }
@@ -580,6 +600,113 @@ async function handleApi(req, res, url) {
   if (pathname === "/api/run/cancel" && method === "POST") {
     state.cancelRequested = true;
     return json(res, 200, { cancelling: true });
+  }
+
+  // 反馈：先在本地生成"要发出去的东西"给用户过目，再由用户点提交。
+  // 预览永远不联网，提交才联网——这是隐私承诺里最容易翻车的地方，别在这里优化"体验"。
+  if (pathname === "/api/feedback/preview" && method === "GET") {
+    const id = url.searchParams.get("resultId") || state.resultId || "";
+    const result = id ? getResult(id) : null;
+    const attach = url.searchParams.get("attachResult") === "1";
+    const logRaw = (() => {
+      try {
+        return fs.readFileSync(log.file(), "utf8");
+      } catch {
+        return "";
+      }
+    })();
+    const report = buildReport({
+      message: url.searchParams.get("message") || "(尚未填写描述)",
+      contact: url.searchParams.get("contact") || "",
+      context: url.searchParams.get("context") || "",
+      env: feedbackEnv(result),
+      logRaw,
+      result: attach ? result : null,
+    });
+    return json(res, 200, { report, bytes: Buffer.byteLength(report), logLines: report.split("\n").filter((l) => /\[\w+\]/.test(l)).length });
+  }
+
+  if (pathname === "/api/feedback" && method === "POST") {
+    const body = await readBody(req);
+    const message = String(body?.message || "").trim();
+    if (message.length < 4) return json(res, 400, { error: "描述太短了：至少写一句，我好知道问题出在哪" });
+    const result = body.resultId ? getResult(String(body.resultId)) : null;
+    const logRaw = (() => {
+      try {
+        return fs.readFileSync(log.file(), "utf8");
+      } catch {
+        return "";
+      }
+    })();
+    const report = buildReport({
+      message,
+      contact: String(body.contact || ""),
+      context: String(body.context || ""),
+      env: feedbackEnv(result),
+      logRaw,
+      result: Boolean(body.attachResult) ? result : null,
+    });
+
+    // 先落本地一份：连不上云端也不能丢用户写的反馈
+    const local = {
+      id: randomUUID(),
+      received_at: Date.now(),
+      version: CLIENT_VERSION,
+      fs_os: result?.hardware?.os_version || "",
+      arch: result?.arch || "",
+      cpu_model: result?.hardware?.cpu_model || "",
+      mem_gb: result?.hardware?.mem_gb || null,
+      contact: String(body.contact || ""),
+      message,
+      ctx: String(body.context || ""),
+      report,
+      sent: false,
+    };
+
+    // 云端：直接走榜单主机（它已经绑了自定义域名，而且客户端优选过边缘 IP）
+    let sent = false;
+    let remoteError = null;
+    if (remote.isConfigured()) {
+      try {
+        const base = String(loadSettings().leaderboardUrl || "").replace(/\/api\/v1$/, "").replace(/\/+$/, "");
+        // 整包走 JSON 提交：和成绩提交共用同一条"优选 IP + 对冲重试"的通道。
+        // （CF 会拦非浏览器的表单 POST，所以不能改用 form-data。）
+        const out = await remote.feedbackSubmit({
+          report,
+          message,
+          contact: String(body.contact || ""),
+          context: String(body.context || ""),
+          version: CLIENT_VERSION,
+          fs_os: local.fs_os,
+          arch: local.arch,
+          cpu_model: local.cpu_model,
+          mem_gb: local.mem_gb,
+          meta: { id: local.id },
+        });
+        sent = Boolean(out?.ok);
+      } catch (e) {
+        remoteError = String(e.message || e);
+      }
+    }
+    local.sent = sent;
+    appendFeedback(local);
+    log.info("feedback_submitted", { sent, bytes: Buffer.byteLength(report), remoteError: remoteError || null });
+
+    return json(res, 200, {
+      ok: true,
+      sent,
+      id: local.id,
+      bytes: Buffer.byteLength(report),
+      // 没发出去也要如实说，并告诉用户备选路径——不要让"提交成功"变成一句谎话
+      message: sent
+        ? "已发送，谢谢！"
+        : `没发送成功${remoteError ? `（${remoteError}）` : ""}，反馈已保存在本机，可以点「导出反馈包」手动发给我。`,
+    });
+  }
+
+  if (pathname === "/api/feedback" && method === "GET") {
+    // 本机留档：用户自己也能看发出去过什么
+    return json(res, 200, { items: listFeedback(30) });
   }
 
   if (pathname === "/api/deep/run" && method === "POST") {

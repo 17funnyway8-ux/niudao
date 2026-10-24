@@ -1,6 +1,7 @@
 /* 牛刀前端：零框架、零依赖，全部视图用原生 DOM 拼装。 */
 import { bindChartHover, lineChart, roundBars } from "./js/chart.js";
 import { copyScoreCardImage, downloadScoreCardPng, downloadScoreCardSvg, scoreCardDataUrl } from "./card.js";
+import { openFeedback } from "./feedback.js";
 
 const $ = (sel, root = document) => root.querySelector(sel);
 
@@ -11,6 +12,17 @@ function applyTheme(mode) {
   document.documentElement.dataset.theme = mode || localStorage.getItem(THEME_KEY) || sys;
 }
 applyTheme();
+
+// 前端异常留个尾巴：用户点"反馈"时能一并带上，不用靠回忆
+const clientErrors = [];
+window.addEventListener("error", (ev) => {
+  clientErrors.push(`${new Date().toISOString()} ${ev.message} @ ${ev.filename}:${ev.lineno}`);
+  if (clientErrors.length > 20) clientErrors.shift();
+});
+window.addEventListener("unhandledrejection", (ev) => {
+  clientErrors.push(`${new Date().toISOString()} unhandled: ${ev.reason?.message || ev.reason}`);
+  if (clientErrors.length > 20) clientErrors.shift();
+});
 document.getElementById("theme-toggle")?.addEventListener("click", () => {
   const next = document.documentElement.dataset.theme === "light" ? "dark" : "light";
   localStorage.setItem(THEME_KEY, next);
@@ -215,6 +227,7 @@ function homeView() {
         ${run?.stage ? "" : ""}
         <div class="card-head"><h2>正在体检</h2><span class="sub">别关页面，也别在这期间跑转码</span><span class="spacer"></span>
           <button class="btn sm ghost" data-action="cancel-run">中止</button>
+          <button class="btn sm ghost" data-action="feedback" title="卡住了？把现场发我">卡住了？</button>
         </div>
         <div class="score-num" style="font-size:34px">${String(doneCount).padStart(2, "0")} <small>/ ${total} 项完成</small></div>
         <div class="progress"><i style="width:${pct}%"></i></div>
@@ -516,6 +529,7 @@ function resultView() {
         <div class="deep-cta-text">快速档只能说明"现在有多快"。深度档会满载烤机 ${state.deep.durationSec / 60} 分钟，看温度和频率会不会掉下来 —— NAS 玩家真正要担心的是这个。</div>
         <button class="btn primary" data-action="start-deep">跑 ${state.deep.durationSec / 60} 分钟深度体检</button>
         <button class="btn ghost sm" data-action="go-home-deep">先改时长</button>
+        <button class="btn ghost sm" data-action="feedback">这份成绩有问题？</button>
       </div>
       ${state.showCard ? `<div class="card-preview"><img src="${scoreCardDataUrl(r)}" alt="牛刀成绩卡" /><div class="faint" style="font-size:12px;margin-top:8px">这张就是可以发群的图。保存 PNG 或复制后直接粘贴到微信 / QQ。</div></div>` : ""}
       <div class="divider"></div>
@@ -822,6 +836,11 @@ function settingsView() {
         <dt>基准机</dt><dd>${esc(state.boot?.baseline?.machine?.cpu_model || "—")}</dd>
         <dt>数据</dt><dd class="faint">本机成绩存在应用数据目录（results.jsonl），删除应用前先导出。</dd>
       </dl>
+      <div class="divider"></div>
+      <div class="row" style="gap:10px;flex-wrap:wrap;align-items:center">
+        <button class="btn" data-action="open-feedback">反馈问题 / 发送日志</button>
+        <span class="faint" style="font-size:12px">发现算错、卡住、看不懂 —— 点这里，带上环境与日志，我才能改得动。</span>
+      </div>
     </div>
   </div>`;
 }
@@ -963,6 +982,25 @@ function pollRun() {
 }
 
 /** 结果页的"体检结论"：异步拿，不阻塞报告首屏（公共榜慢也只慢这一块） */
+/**
+ * "页面现场"：出问题时最该被记下来的几件事。
+ * 放进反馈包，省掉来回问"你当时在哪个页面、点了什么"。
+ */
+function feedbackContext() {
+  const run = state.run || {};
+  const errs = (run.events || []).filter((e) => e.status === "error").map((e) => `${e.stage}: ${e.message || ""}`);
+  const parts = [
+    `页面: ${location.hash || "#/home"}`,
+    `时间: ${new Date().toISOString()}`,
+    state.result ? `正在看的成绩: ${state.result.id}（综合 ${state.result.scores?.composite ?? "—"}）` : "",
+    run.status ? `最近一次运行: ${run.kind || "fast"} / ${run.status}${run.error ? ` / 错误: ${run.error}` : ""}` : "",
+    errs.length ? `失败阶段: ${errs.join("；")}` : "",
+    state.board.data ? `榜单: ${state.board.data.mode}${state.board.data.stale ? "（旧数据）" : ""}${state.board.data.unavailable ? "（连不上）" : ""}` : "",
+    `视口: ${window.innerWidth}×${window.innerHeight} · 主题 ${document.documentElement.dataset.theme || "-"}`,
+  ];
+  return parts.filter(Boolean).join("\n");
+}
+
 async function loadVerdict(id) {
   if (!id) return;
   state.verdictLoading = true;
@@ -1063,6 +1101,21 @@ document.addEventListener("click", async (ev) => {
   }
   if (action === "toggle-metrics") {
     state.showMetrics = !state.showMetrics;
+    return;
+  }
+  if (action === "open-feedback") {
+    openFeedback({
+      api,
+      resultId: state.result?.id || null,
+      context: feedbackContext(),
+      onToast: toast,
+    });
+    return;
+  }
+  if (action === "feedback") {
+    // 任何位置的"有个问题？"入口都用这个动作，自动带上当前页面与前端错误
+    const ctx = [feedbackContext(), clientErrors.length ? `前端错误:\n${clientErrors.slice(-5).join("\n")}` : ""].filter(Boolean).join("\n");
+    openFeedback({ api, resultId: state.result?.id || null, context: ctx, onToast: toast });
     return;
   }
   if (action === "go-home-deep") {

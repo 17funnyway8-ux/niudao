@@ -450,3 +450,102 @@ input[type="checkbox"] { width: 14px; height: 14px; accent-color: var(--accent);
   border: 1px solid var(--line);
   box-shadow: 0 8px 28px rgba(0, 0, 0, 0.08);
 }
+
+/* ---------------- 反馈抽屉 ---------------- */
+.fb-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(8, 12, 10, 0.45);
+  backdrop-filter: blur(2px);
+  z-index: 90;
+  display: flex;
+  justify-content: flex-end;
+}
+.fb-drawer {
+  width: min(560px, 100%);
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg, #fff);
+  border-left: 1px solid var(--line);
+  box-shadow: -12px 0 40px rgba(0, 0, 0, 0.14);
+  animation: fb-in 180ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+@keyframes fb-in {
+  from { transform: translateX(16px); opacity: 0.6; }
+  to { transform: translateX(0); opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .fb-drawer { animation: none; }
+}
+.fb-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--line);
+}
+.fb-head h2 { font-size: 15px; margin: 0; font-weight: 650; }
+.fb-head .icon-btn { margin-left: auto; }
+.fb-body { flex: 1; overflow-y: auto; padding: 16px 18px; }
+.fb-lead { font-size: 12.5px; color: var(--muted); line-height: 1.7; margin: 0 0 14px; }
+.fb-label {
+  display: block;
+  font-size: 12px;
+  color: var(--muted);
+  margin: 14px 0 6px;
+}
+.fb-body textarea,
+.fb-body input[type="text"] {
+  width: 100%;
+  font: inherit;
+  font-size: 13px;
+  padding: 9px 11px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface, transparent);
+  color: inherit;
+  resize: vertical;
+}
+.fb-body textarea:focus,
+.fb-body input[type="text"]:focus {
+  outline: 2px solid var(--accent, #2e7d5b);
+  outline-offset: 1px;
+}
+.fb-attach { margin-top: 14px; font-size: 12.5px; }
+.fb-preview-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--muted);
+  margin: 18px 0 6px;
+}
+.fb-preview {
+  margin: 0;
+  max-height: 240px;
+  overflow: auto;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-2, rgba(120, 140, 120, 0.06));
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 11px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.fb-note {
+  margin-top: 8px;
+  font-size: 11.5px;
+  color: var(--muted);
+  line-height: 1.6;
+}
+.fb-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 18px;
+  border-top: 1px solid var(--line);
+  background: var(--bg, #fff);
+}

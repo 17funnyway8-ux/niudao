@@ -277,6 +277,11 @@ export async function leaderboard({ dim = "overall", arch = "", cpu = "", limit 
   return call(`/api/v1/leaderboard?${q.toString()}`);
 }
 
+/** 提交反馈到云端（/api/feedback）。和成绩提交共用传输层：优选 IP、长连接、对冲重试。 */
+export async function feedbackSubmit(payload) {
+  return call("/api/feedback", { method: "POST", body: payload });
+}
+
 export async function stats({ dim = "overall", arch = "" } = {}) {
   const q = new URLSearchParams({ dim });
   if (arch) q.set("arch", arch);
