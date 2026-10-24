@@ -351,7 +351,9 @@ input[type="checkbox"] { width: 14px; height: 14px; accent-color: var(--accent);
 .tag-list { display: flex; flex-wrap: wrap; gap: 4px; }
 
 /* ---------- toast ---------- */
-.toast-wrap { position: fixed; right: 16px; bottom: 16px; display: flex; flex-direction: column; gap: 6px; z-index: 60; }
+.toast-wrap { position: fixed; right: 16px; bottom: 16px; display: flex; flex-direction: column; gap: 6px; z-index: 200; }
+/* 反馈抽屉是 z-index:90，toast 必须更高，否则"已发送"提示会被抽屉盖住 */
+
 .toast {
   min-width: 200px; max-width: 360px;
   padding: 8px 11px;
@@ -361,6 +363,7 @@ input[type="checkbox"] { width: 14px; height: 14px; accent-color: var(--accent);
   font-size: 12.5px;
 }
 .toast.err { background: var(--bad); color: #fff; }
+.toast.ok { background: var(--accent); color: #fff; }
 @keyframes rise { from { opacity: 0; transform: translateY(6px); } }
 .toast { animation: rise .16s ease-out; }
 
@@ -618,3 +621,17 @@ input[type="checkbox"] { width: 14px; height: 14px; accent-color: var(--accent);
   background: var(--brand-lime);
   opacity: .9;
 }
+
+/* 反馈抽屉里的状态位：发送中/已发送/没发出去都写在这儿，不依赖右下角 toast */
+.fb-hint { font-size: 11.5px; color: var(--muted); margin-left: 4px; }
+
+/* 稳定性判定档位：当前落在哪一档高亮，其余压暗 —— 让"为什么是这个结论"看得见 */
+.tier-row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.tier-row .pill { opacity: .45; }
+.tier-row .pill.on { opacity: 1; border-color: var(--brand-lime); background: var(--accent-soft); font-weight: 600; }
+
+/* 分段按钮：架构切换用。三个选项平铺，一眼看到、一下点中，比下拉少两步 */
+.seg .btn { border-radius: 0; }
+.seg .btn:first-child { border-radius: 4px 0 0 4px; }
+.seg .btn:last-child { border-radius: 0 4px 4px 0; }
+.seg .btn + .btn { border-left: none; }

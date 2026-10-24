@@ -47,7 +47,12 @@ export async function runSuite({ targetDir, onEvent = () => {}, opts = {} }) {
 
   // 实时数值流：跑分时不让用户只看一根进度条。CPU 吞吐、磁盘速率、温度每秒上报一次。
   const live = (payload) => emit({ type: "live", ...payload });
-  const sampler = startSampler((s) => live({ temp: s }), 1000);
+  // 每秒采样：既给界面看实时温度，也攒下来算"测试期间 CPU 实际频率"
+  const cpuFreqSamples = [];
+  const sampler = startSampler((s) => {
+    live({ temp: s });
+    if (Number.isFinite(s?.freqMhz) && s.freqMhz > 0) cpuFreqSamples.push({ t: s.t, mhz: s.freqMhz });
+  }, 1000);
   // 让 UI 在每个阶段开始时清掉上一阶段的实时数字（避免磁盘速率还挂在 CPU 阶段上）
   live({ stage: null });
 
@@ -123,6 +128,26 @@ export async function runSuite({ targetDir, onEvent = () => {}, opts = {} }) {
   });
 
   sampler.stop();
+  // 测试期间的工作频率 —— 同型号 CPU 开不开睿频，分数差得很多，
+  // 不记录频率的话，看到"同一颗 CPU 差 30%"根本没法解释。
+  detail.cpuClock = (() => {
+    const freq = cpuFreqSamples.map((x) => x.mhz).filter((x) => x > 0);
+    if (!freq.length) return { available: false, reason: "这台机器读不到 CPU 频率（缺 cpufreq 或权限）" };
+    const sorted = [...freq].sort((a, b) => a - b);
+    const pct = (p) => sorted[Math.min(sorted.length - 1, Math.floor((p / 100) * sorted.length))];
+    const avg = Math.round(freq.reduce((a, b) => a + b, 0) / freq.length);
+    const max = Math.max(...freq);
+    return {
+      available: true,
+      avgMhz: avg,
+      maxMhz: max,
+      p95Mhz: pct(95),
+      minMhz: Math.min(...freq),
+      samples: freq.length,
+      // 峰值稳态比：越高说明越接近"全核满频"
+      sustainedPct: max > 0 ? Math.round((avg / max) * 1000) / 10 : null,
+    };
+  })();
   return {
     metrics,
     durations,

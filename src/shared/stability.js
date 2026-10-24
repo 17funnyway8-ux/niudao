@@ -121,63 +121,70 @@ export function analyzeStability({
   const span = durationSec < 90 ? `${Math.round(durationSec)}秒` : `${Math.round(durationSec / 60)}分钟`;
 
   // ---- 结论：优先用逐轮稳定性 ----
+  // 档位设计原则（对标 3DMark 压力测试的 97% 线，但把"家用 NAS"的实际情况摊开）：
+  //   97% 以上：几乎无衰减 —— 家用 3DMark 同款合格线
+  //   94–97%： 轻微衰减。热点温度高一点、风扇策略保守，都会落在这里，不算问题
+  //   88–94%： 明显降频。能感知到，转码/编译时间会变长
+  //   <88%：   散热吃紧或功耗墙过严。属于"短跑猛、长跑虚"
+  // 原来的 92/85 两档太粗：94% 这种很常见的健康机器会被叫成"轻微衰减"，
+  // 而 86% 和 60% 都被塞进同一个"散热吃紧"，没有区分度。
+  const TIERS = [
+    { min: 97, level: "good", headline: "散热合格", hint: "持续负载下性能几乎不掉，可以长期跑重活。" },
+    { min: 94, level: "ok", headline: "轻微衰减", hint: "高温段有温和降速，日常使用基本无感。" },
+    { min: 88, level: "warn", headline: "明显降频", hint: "转码、编译这类长任务会明显变慢。" },
+    { min: 0, level: "bad", headline: "散热吃紧", hint: "建议清灰、换硅脂，或把功耗墙松开一点。" },
+  ];
+  const tierOf = (pct) => TIERS.find((t) => pct >= t.min) || TIERS[TIERS.length - 1];
+
   let level = "unknown";
   let headline = "数据不足，无法判断";
   let detail = "";
+  let tier = null;
 
   if (steady) {
     const pct = steady.pct;
-    if (pct >= 97) {
-      level = "good";
-      headline = "散热合格";
-      detail = `满载${span}，逐轮性能波动 ${(100 - pct).toFixed(1)}%（最差 ${steady.worstMops} / 最好 ${steady.bestMops} MOps/s），持续负载下性能稳定，可以长期跑重活。`;
-    } else if (pct >= 92) {
-      level = "ok";
-      headline = "轻微衰减";
-      detail = `满载${span}，逐轮性能波动 ${(100 - pct).toFixed(1)}%，属于可接受范围；长时间转码/编译时机器会温和降速。`;
-    } else if (pct >= 85) {
-      level = "warn";
-      headline = "明显降频";
-      detail = `满载${span}，逐轮性能波动 ${(100 - pct).toFixed(1)}%，说明散热或功耗墙压住了持续性能。`;
-    } else {
-      level = "bad";
-      headline = "散热吃紧";
-      detail = `满载${span}，逐轮性能波动 ${(100 - pct).toFixed(1)}%，属于"短跑猛、长跑虚"。建议清灰、换硅脂或降低功耗墙后再测。`;
+    tier = tierOf(pct);
+    level = tier.level;
+    headline = tier.headline;
+    const drop = (100 - pct).toFixed(1);
+    const extra = [
+      `逐轮性能波动 ${drop}%（最差 ${steady.worstMops} / 最好 ${steady.bestMops} MOps/s）`,
+      tier.hint,
+    ];
+    // 逐轮离散度大：说明期间还有别的负载在抢 CPU，结论要打折
+    if (steady && steady.values?.length > 2) {
+      const vals = steady.values;
+      const spread = ((Math.max(...vals) - Math.min(...vals)) / Math.max(...vals)) * 100;
+      if (spread > 5) extra.push(`注意：各轮之间波动 ${spread.toFixed(1)}%，期间可能有别的任务在抢 CPU，结论仅供参考`);
     }
+    detail = `满载${span}，${extra.join("；")}。`;
   } else if (boost) {
     const keep = boost.keepPct;
-    if (keep >= 97) {
-      level = "good";
-      headline = "散热合格";
-      detail = `满载${span}后性能只差 ${boost.dropPct}%（逐轮样本不足，退回冷/热对比口径）。`;
-    } else if (keep >= 92) {
-      level = "ok";
-      headline = "轻微衰减";
-      detail = `满载${span}后性能下降 ${boost.dropPct}%（逐轮样本不足，退回冷/热对比口径）。`;
-    } else if (keep >= 85) {
-      level = "warn";
-      headline = "明显降频";
-      detail = `满载${span}后性能掉 ${boost.dropPct}%（逐轮样本不足，退回冷/热对比口径）。`;
-    } else {
-      level = "bad";
-      headline = "散热吃紧";
-      detail = `满载${span}后性能掉 ${boost.dropPct}%，属于"短跑猛、长跑虚"。`;
-    }
+    tier = tierOf(keep);
+    level = tier.level;
+    headline = tier.headline;
+    detail = `满载${span}后性能变为冷态的 ${keep}%（掉 ${boost.dropPct}%）；${tier.hint}` +
+      "（逐轮样本不足，退回「冷态 vs 热态」口径）";
     notes.push("满载期间只采到不足 3 轮吞吐，稳定性退回「冷态 vs 热态」口径，精度较低（建议跑 3 分钟以上）");
   } else if (freq) {
     const drop = freq.dropPct ?? 0;
+    // 频率档位同样分四档，但阈值不同：频率掉 15% 不代表性能掉 15%（功耗墙会先压频率）
     if (drop <= 5) {
       level = "good";
       headline = "频率稳定";
       detail = `满载期间频率基本没掉（峰值 ${freq.peakMhz} MHz → 稳态 ${freq.steadyMhz} MHz）。`;
-    } else if (drop <= 15) {
+    } else if (drop <= 12) {
       level = "ok";
       headline = "有轻微降频";
-      detail = `满载期间频率下降 ${drop}%，属正常范围。`;
-    } else {
+      detail = `满载期间频率下降 ${drop}%（${freq.peakMhz} → ${freq.steadyMhz} MHz），属正常范围。`;
+    } else if (drop <= 25) {
       level = "warn";
       headline = "频率下降明显";
       detail = `满载期间频率下降 ${drop}%（${freq.peakMhz} → ${freq.steadyMhz} MHz），散热压力偏大。`;
+    } else {
+      level = "bad";
+      headline = "频率掉得厉害";
+      detail = `满载期间频率下降 ${drop}%（${freq.peakMhz} → ${freq.steadyMhz} MHz），基本是靠降频在硬撑。`;
     }
     notes.push("缺少性能对比数据，结论仅基于频率变化");
   }
@@ -209,7 +216,9 @@ export function analyzeStability({
       ? { preMops: boost.coldMops, postMops: boost.hotMops, keepPct: boost.keepPct, lossPct: boost.dropPct }
       : null,
     rounds: (rounds || []).map((r) => ({ t: Math.round(r.t), mops: round(r.mops) })),
-    verdict: { level, headline, detail },
+    verdict: { level, headline, detail, tier: tier ? { min: tier.min, label: tier.headline } : null },
+    /** 判定档位表：报告里直接展示，用户不用猜"多少算合格" */
+    tiers: TIERS.map((t) => ({ min: t.min, label: t.headline, level: t.level, hint: t.hint })),
     notes,
   };
 }

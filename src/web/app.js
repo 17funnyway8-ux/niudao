@@ -44,11 +44,11 @@ const state = {
   result: null,
   verdict: null,
   verdictLoading: false,
-  showMetrics: false,
+  showMetrics: true,
   showCard: false,
   run: null,
   poll: null,
-  board: { dim: "overall", arch: null, cpuOnly: false, data: null, loading: false, error: null },
+  board: { dim: "overall", arch: "", cpuOnly: false, data: null, loading: false, error: null },
   deep: { durationSec: 300, loadDisk: false, liveSeries: [] },
   fast: { liveSeries: [] },
 };
@@ -112,8 +112,8 @@ function howMeasured(r, key) {
   const d = r.detail || {};
   const threads = d.cpu_multi?.threads || r.hardware?.threads || "?";
   const map = {
-    cpu_single: `2 轮 × ${Math.round((r.durations?.cpu_single || 10000) / 2000)}s`,
-    cpu_multi: `${threads} 线程 × ${Math.round((r.durations?.cpu_multi || 5000) / 1000)}s`,
+    cpu_single: `2 轮 × ${Math.round((r.durations?.cpu_single || 10000) / 2000)}s${clockHint(r)}`,
+    cpu_multi: `${threads} 线程 × ${Math.round((r.durations?.cpu_multi || 5000) / 1000)}s${clockHint(r)}`,
     crypto_aes: `GCM ${d.crypto?.totalMb || "—"}MB / ${d.crypto?.chunkMb || "—"}MB 块`,
     zlib: `deflate L${d.crypto?.level || 6} ${d.crypto?.sizeMb || "—"}MB（压缩率 ${d.crypto?.ratio ?? "—"}）`,
     mem_copy: `${d.memory?.bytesMb || "—"}MB 拷贝 × ${d.memory?.reps || "—"}`,
@@ -124,6 +124,23 @@ function howMeasured(r, key) {
     disk_rand_write: `4K QD1 / ${d.disk_random?.fileMb || "—"}MB 文件`,
   };
   return map[key] || "—";
+}
+
+/**
+ * 测试期间 CPU 的工作频率。同型号 CPU 开不开睿频、功耗墙设多少，
+ * 结果能差 30% 以上 —— 不写这个，看榜的人只会以为"同一颗 U 有人虚标"。
+ */
+function clockHint(r) {
+  const c = r?.detail?.cpuClock;
+  if (!c || !c.available) return "";
+  return ` · 均频 ${num(c.avgMhz)}MHz`;
+}
+
+function clockCell(r) {
+  const c = r?.detail?.cpuClock;
+  if (!c || !c.available) return `<span class="faint">未读到这里</span>`;
+  const sustained = Number.isFinite(c.sustainedPct) ? `，稳态 ${c.sustainedPct}%` : "";
+  return `<span class="mono">${num(c.avgMhz)}</span> <span class="faint">MHz 平均（峰值 ${num(c.maxMhz)}${sustained}）</span>`;
 }
 
 const VERDICT_TONE = { good: "good", ok: "warn", warn: "warn", bad: "bad", unknown: "" };
@@ -411,6 +428,19 @@ function deepResultView(r) {
         ${s.probeSec ? `<span class="pill">每 ${s.probeSec}s 一轮</span>` : ""}
       </div>
       <div class="score-sub" style="margin-top:8px">${esc(v.detail || "")}</div>
+      ${
+        Array.isArray(s.tiers) && s.tiers.length
+          ? `<div class="tier-row" style="margin-top:12px">
+              <span class="faint" style="font-size:12px">判定档位：</span>
+              ${s.tiers
+                .map(
+                  (t) =>
+                    `<span class="pill ${t.level === v.level ? "on" : ""}" title="${esc(t.hint || "")}">≥${t.min}% ${esc(t.label)}</span>`,
+                )
+                .join("")}
+            </div>`
+          : ""
+      }
       <div class="row" style="margin-top:14px;gap:8px;flex-wrap:wrap">
         <a class="btn" href="api/results/${esc(r.id)}/report.md" target="_blank" rel="noreferrer">Markdown 报告</a>
         <a class="btn ghost" href="api/results/${esc(r.id)}/export.json">导出 JSON</a>
@@ -541,7 +571,7 @@ function resultView() {
       <div class="card">
         <details class="metrics-details" ${state.showMetrics ? "open" : ""} id="metrics-details">
           <summary class="card-head" style="cursor:pointer;list-style:none">
-            <h2>原始指标</h2><span class="sub">归一化分 = 实测 / 基准 × 1000 · 点开展开</span>
+            <h2>原始指标</h2><span class="sub">归一化分 = 实测 / 基准 × 1000</span>
           </summary>
         <table class="table">
           <thead><tr><th>指标</th><th class="num">实测</th><th class="num">归一化</th><th>测法</th></tr></thead>
@@ -570,6 +600,7 @@ function resultView() {
         <dl class="kv">
           <dt>CPU</dt><dd>${esc(r.hardware.cpu_model)}</dd>
           <dt>核心</dt><dd>${r.hardware.cores} 核 / ${r.hardware.threads} 线程</dd>
+          <dt>测试频率</dt><dd>${clockCell(r)}</dd>
           <dt>内存</dt><dd>${r.hardware.mem_gb} GB${r.hardware.mem_gib ? ` <span class="faint">（可见 ${r.hardware.mem_gib} GiB）</span>` : ""}</dd>
           <dt>整机</dt><dd>${esc(r.hardware.board || "—")}</dd>
           <dt>显卡</dt><dd>${esc(r.hardware.gpu || "—")}</dd>
@@ -588,8 +619,8 @@ function boardView() {
   const b = state.boot?.leaderboard;
   const data = state.board.data;
   const myCpu = state.boot?.hardware?.hardware?.cpu_model || "";
-  const myArch = state.boot?.hardware?.arch || "";
-  if (state.board.arch === null) state.board.arch = myArch; // 首次进入默认只看同架构
+  // 默认"全部架构"：榜上人还不多，先让人看到全貌；
+  // 想认真比就点同型号或切架构（一排按钮，不用下拉）。
   const dims = [
     ["overall", "综合"],
     ["cpu", "CPU"],
@@ -603,11 +634,18 @@ function boardView() {
       </div>
       <button class="btn sm ${state.board.cpuOnly ? "primary" : "ghost"}" data-action="board-cpu" title="只和同一颗 CPU 的机器比">${state.board.cpuOnly ? "✓ 同型号" : "同型号"}</button>
       <span class="spacer"></span>
-      <select id="board-arch" style="width:auto">
-        <option value="" ${state.board.arch === "" ? "selected" : ""}>全部架构</option>
-        <option value="x64" ${state.board.arch === "x64" ? "selected" : ""}>x86_64</option>
-        <option value="arm64" ${state.board.arch === "arm64" ? "selected" : ""}>ARM64</option>
-      </select>
+      <div class="row seg" style="gap:0">
+        ${[
+          ["", "全部架构"],
+          ["x64", "x86_64"],
+          ["arm64", "ARM64"],
+        ]
+          .map(
+            ([v, label]) =>
+              `<button class="btn sm ${state.board.arch === v ? "primary" : "ghost"}" data-action="board-arch" data-arch="${v}">${label}</button>`,
+          )
+          .join("")}
+      </div>
       <button class="btn sm ghost" data-action="board-refresh">刷新</button>
     </div>`;
 
@@ -1119,6 +1157,10 @@ document.addEventListener("click", async (ev) => {
     setTimeout(() => document.querySelector(".deep-card")?.scrollIntoView({ behavior: "smooth", block: "center" }), 120);
     return;
   }
+  if (action === "board-arch") {
+    state.board.arch = el.dataset.arch;
+    return loadBoard();
+  }
   if (action === "board-cpu") {
     state.board.cpuOnly = !state.board.cpuOnly;
     return loadBoard();
@@ -1206,10 +1248,6 @@ document.addEventListener("click", async (ev) => {
 });
 
 document.addEventListener("change", (ev) => {
-  if (ev.target.id === "board-arch") {
-    state.board.arch = ev.target.value;
-    loadBoard();
-  }
   if (ev.target.id === "deep-disk") {
     state.deep.loadDisk = ev.target.checked;
   }

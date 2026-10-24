@@ -51,6 +51,7 @@ export function openFeedback({ api, rel, resultId = null, context = "", onToast 
       </div>
       <div class="fb-foot">
         <button class="btn ghost" data-fb="export">导出反馈包</button>
+        <span class="fb-hint"></span>
         <span class="spacer"></span>
         <button class="btn ghost" data-fb="refresh">刷新预览</button>
         <button class="btn primary" data-fb="send">发送反馈</button>
@@ -137,6 +138,8 @@ export function openFeedback({ api, rel, resultId = null, context = "", onToast 
       state.sending = true;
       btn.disabled = true;
       btn.textContent = "发送中…";
+      const hint = $(".fb-foot .fb-hint", backdrop);
+      if (hint) hint.textContent = "正在发送，可能需要几秒（网络不好时会重试）…";
       try {
         const out = await state.api("/api/feedback", {
           method: "POST",
@@ -149,8 +152,28 @@ export function openFeedback({ api, rel, resultId = null, context = "", onToast 
           }),
         });
         state.sent = out;
-        onToast(out.sent ? "已发送，谢谢！" : out.message || "已保存到本机", out.sent ? "ok" : "");
-        close();
+        // 关键：先让用户在这块地方看到结果，再关抽屉。
+        // 之前只弹 toast，而 toast 被抽屉的 z-index 盖住 → 用户以为"点了没反应"。
+        if (!out.sent) {
+          if (hint) hint.textContent = out.message || "没发出去，已保存在本机";
+          btn.disabled = false;
+          btn.textContent = "重试发送";
+          onToast(out.message || "已保存到本机", "err");
+          return;
+        }
+        // 留在抽屉里显示结果：用户点"完成"才关。
+        // （之前自动关 + toast 被抽屉遮住 = "点了没反应"）
+        preview.textContent = `✅ 已发送（${(out.bytes / 1024).toFixed(1)} KB）\n编号 ${out.id}\n\n我会在后台看到这条反馈和脱敏日志，谢谢！`;
+        if (hint) hint.textContent = "已发送";
+        btn.textContent = "完成";
+        btn.disabled = false;
+        btn.dataset.fb = "close";
+        message.disabled = true;
+        contact.disabled = true;
+        attach.disabled = true;
+        const retry = $('[data-fb="refresh"]', backdrop);
+        if (retry) retry.style.display = "none";
+        onToast("已发送，谢谢！", "ok");
       } catch (e) {
         onToast("发送失败：" + e.message, "err");
       } finally {
