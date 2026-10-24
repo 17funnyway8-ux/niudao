@@ -279,6 +279,7 @@ export async function stats({ dim = "overall", arch = "" } = {}) {
  * 之后由 noteFailure() 触发重探。返回 {ip, ms} 或 null（全都不通就走 DNS）。
  */
 export async function selectEdge() {
+  if (process.env.NIUDAO_EDGE === "off") return null; // 测试/离线环境别去探测公网
   const base = baseUrl();
   if (!base) return null;
   let host = "";

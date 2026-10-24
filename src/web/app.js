@@ -36,8 +36,11 @@ const state = {
 };
 
 /* ---------------- api ---------------- */
+// 所有接口都用**相对路径**：<base> 已经指向 /app/niudao/ 或 /，带前导斜杠会绕过它
+const rel = (p) => String(p).replace(/^\/+/, "");
+
 async function api(path, opts = {}) {
-  const res = await fetch(path, {
+  const res = await fetch(rel(path), {
     headers: { "content-type": "application/json" },
     ...opts,
   });
@@ -360,8 +363,8 @@ function deepResultView(r) {
       </div>
       <div class="score-sub" style="margin-top:8px">${esc(v.detail || "")}</div>
       <div class="row" style="margin-top:14px;gap:8px;flex-wrap:wrap">
-        <a class="btn" href="/api/results/${esc(r.id)}/report.md" target="_blank" rel="noreferrer">Markdown 报告</a>
-        <a class="btn ghost" href="/api/results/${esc(r.id)}/export.json">导出 JSON</a>
+        <a class="btn" href="api/results/${esc(r.id)}/report.md" target="_blank" rel="noreferrer">Markdown 报告</a>
+        <a class="btn ghost" href="api/results/${esc(r.id)}/export.json">导出 JSON</a>
       </div>
     </div>
 
@@ -443,9 +446,9 @@ function resultView() {
         <span class="spacer"></span>
         <div class="row" style="flex-wrap:wrap">
           <button class="btn primary" data-action="submit-result" data-id="${esc(r.id)}">提交到天梯</button>
-          <a class="btn" href="/api/results/${esc(r.id)}/report.md" target="_blank" rel="noreferrer">Markdown</a>
+          <a class="btn" href="api/results/${esc(r.id)}/report.md" target="_blank" rel="noreferrer">Markdown</a>
           <button class="btn ghost" data-action="copy-card" data-id="${esc(r.id)}">复制成绩卡</button>
-          <a class="btn ghost" href="/api/results/${esc(r.id)}/export.json">JSON</a>
+          <a class="btn ghost" href="api/results/${esc(r.id)}/export.json">JSON</a>
         </div>
       </div>
       <div class="divider"></div>

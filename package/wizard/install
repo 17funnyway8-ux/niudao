@@ -34,11 +34,11 @@
         "field": "wizard_leaderboard",
         "label": "排行榜服务地址",
         "initValue": "",
-        "rules": [{ "pattern": "^(https?://.*)?$", "message": "需要以 http:// 或 https:// 开头，留空表示只用本地成绩" }]
+        "rules": [{ "pattern": "^(https?://.*)?$", "message": "需要以 http:// 或 https:// 开头；留空表示用内置官方榜" }]
       },
       {
         "type": "tips",
-        "helpText": "没有公共服务器？项目自带一个零依赖的榜单服务，跑起来后把地址填这里（例如 http://192.168.1.10:8790）。留空也能正常使用，只是没有跨机器排名。"
+        "helpText": "留空即可：默认连内置官方榜 https://fnbench.1133891.xyz（Cloudflare 托管，装好就能跟别人的机器排在一起）。只有想用自建榜单时才填，例如 http://192.168.1.10:8790。"
       }
     ]
   }

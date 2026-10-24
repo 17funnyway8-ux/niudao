@@ -103,23 +103,45 @@ function readBody(req, limit = 128 * 1024) {
   });
 }
 
-function serveStatic(res, urlPath) {
-  const rel = urlPath === "/" ? "index.html" : urlPath.replace(/^\/+/, "");
+/** 飞牛统一网关会把外部路径原样转发进来（/app/niudao/xxx），应用必须自己认这个前缀。 */
+export function appPrefix() {
+  return process.env.NIUDAO_PREFIX || "/app/niudao";
+}
+
+/** 把 /app/niudao/xxx 拆成 { rest: /xxx, prefix: /app/niudao }；不带前缀时 prefix 为空串。 */
+export function splitPrefix(pathname) {
+  const prefix = appPrefix();
+  if (pathname === prefix) return { rest: "/", prefix };
+  if (pathname.startsWith(`${prefix}/`)) return { rest: pathname.slice(prefix.length), prefix };
+  return { rest: pathname, prefix: "" };
+}
+
+/**
+ * 首页必须在**运行时**注入 <base>：
+ *   走网关时 base=/app/niudao/，直连开发时 base=/。
+ * 否则页面里的 styles.css / api/xxx 相对路径会解析到 NAS 根上，整页白屏
+ * （第一版就是踩了这个：打开应用只看到一个大图标）。
+ */
+function sendIndex(res, prefix) {
+  fs.readFile(path.join(WEB_DIR, "index.html"), "utf8", (err, html) => {
+    if (err) return json(res, 404, { error: "资源不存在" });
+    const out = html.replaceAll("__BASE__", `${prefix}/`);
+    const buf = Buffer.from(out);
+    res.writeHead(200, { "content-type": MIME[".html"], "content-length": buf.length, "cache-control": "no-cache" });
+    res.end(buf);
+  });
+}
+
+function serveStatic(res, rest, prefix = "") {
+  const rel = rest === "/" ? "index.html" : rest.replace(/^\/+/, "");
   const full = path.join(WEB_DIR, path.normalize(rel));
   if (!full.startsWith(WEB_DIR)) {
     json(res, 403, { error: "非法路径" });
     return;
   }
   fs.readFile(full, (err, buf) => {
-    if (err) {
-      // 单页应用：未知路径回落到 index.html
-      fs.readFile(path.join(WEB_DIR, "index.html"), (e2, html) => {
-        if (e2) return json(res, 404, { error: "资源不存在" });
-        res.writeHead(200, { "content-type": MIME[".html"], "cache-control": "no-cache" });
-        res.end(html);
-      });
-      return;
-    }
+    // 单页应用：未知路径、以及 index.html 本身都走注入了 __BASE__ 的版本
+    if (err || full === path.join(WEB_DIR, "index.html")) return sendIndex(res, prefix);
     const ext = path.extname(full).toLowerCase();
     res.writeHead(200, { "content-type": MIME[ext] || "application/octet-stream", "cache-control": "no-cache" });
     res.end(buf);
@@ -733,6 +755,9 @@ export function createServer() {
   return http.createServer((req, res) => {
     const started = process.hrtime.bigint();
     const url = new URL(req.url || "/", "http://localhost");
+    // 网关前缀（/app/niudao）在这里一次性剥掉，后面所有路由都按不带前缀的路径处理
+    const split = splitPrefix(url.pathname);
+    url.pathname = split.rest;
     const isApi = url.pathname.startsWith("/api/");
 
     res.on("finish", () => {
@@ -753,7 +778,7 @@ export function createServer() {
       });
       return;
     }
-    serveStatic(res, url.pathname);
+    serveStatic(res, split.rest, split.prefix);
   });
 }
 

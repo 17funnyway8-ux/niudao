@@ -89,6 +89,12 @@ node build.mjs --pack        # 组装运行时 + 包体检 + fnpack build → pa
 安装后入口在桌面「牛刀」，实际访问路径 `/app/niudao`（统一网关，不占主机端口）。
 日志在应用数据目录：`/var/apps/niudao/var/app.log`。
 
+> 桌面入口走飞牛统一网关：`ui/config` 声明的 `gatewayPrefix=/app/niudao`，网关会把
+> `/app/niudao/xxx` 原样转发进来，所以服务端会先剥掉这个前缀，再在首页注入
+> `<base href="/app/niudao/">`；前端所有资源与接口都用相对路径。
+> 少了这一步的表现是「点开应用只显示一个巨大的图标」——因为 `styles.css`、`app.js`
+> 会被解析到 NAS 根上 404，页面根本渲染不出来。
+
 ## 两种榜单后端
 
 | 后端 | 地址 | 特点 |

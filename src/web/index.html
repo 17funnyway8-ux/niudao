@@ -3,9 +3,11 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <!-- 走飞牛统一网关时是 /app/niudao/，直连开发时是 /；由服务端在发送时替换 -->
+    <base href="__BASE__" />
     <title>牛刀 · 飞牛性能天梯</title>
-    <link rel="stylesheet" href="/styles.css" />
-    <link rel="icon" href="/favicon.svg" />
+    <link rel="stylesheet" href="styles.css" />
+    <link rel="icon" href="favicon.svg" />
   </head>
   <body>
     <header class="topbar">
@@ -39,6 +41,6 @@
 
     <div class="toast-wrap" id="toasts"></div>
 
-    <script type="module" src="/app.js"></script>
+    <script type="module" src="app.js"></script>
   </body>
 </html>

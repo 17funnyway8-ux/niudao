@@ -8,6 +8,7 @@ import { after, test } from "node:test";
 const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "niudao-http-"));
 process.env.NIUDAO_DATA = dataDir;
 process.env.NIUDAO_TARGET = dataDir;
+process.env.NIUDAO_EDGE = "off"; // 单测不联网、不探测 CF 边缘
 
 const { start } = await import("../src/server/http.js");
 const { appendResult } = await import("../src/server/store.js");
@@ -145,4 +146,32 @@ test("空闲时状态是 idle，中止请求不会报错", async () => {
   const cancel = await post("/api/run/cancel", {});
   assert.equal(cancel.status, 200);
   assert.equal(cancel.body.cancelling, true);
+});
+
+test("统一网关前缀：/app/niudao 下的页面、静态资源与接口都要能用", async () => {
+  // 飞牛统一网关把外部路径原样转发进来，应用必须自己剥前缀；
+  // 首页还要在运行时注入 <base>，否则 styles.css / api 会解析到 NAS 根上（整页白屏）
+  const health = await get("/app/niudao/api/health");
+  assert.equal(health.status, 200);
+  assert.equal(health.body.ok, true);
+
+  const page = await fetch(`${base}/app/niudao/`);
+  const html = await page.text();
+  assert.equal(page.status, 200);
+  assert.match(html, /<base href="\/app\/niudao\/"/, "走网关时 base 必须是 /app/niudao/");
+  assert.ok(!html.includes('href="/styles.css"'), "静态资源不能用绝对路径");
+
+  const css = await fetch(`${base}/app/niudao/styles.css`);
+  assert.equal(css.status, 200);
+  assert.match(css.headers.get("content-type") || "", /text\/css/);
+
+  const deep = await fetch(`${base}/app/niudao/some/deep/link`); // SPA 回落也要带 base
+  assert.match(await deep.text(), /<base href="\/app\/niudao\/"/);
+});
+
+test("直连（无前缀）时 base 是 /，开发态不受影响", async () => {
+  const page = await fetch(`${base}/`);
+  assert.match(await page.text(), /<base href="\/"/);
+  const health = await get("/api/health");
+  assert.equal(health.status, 200);
 });
