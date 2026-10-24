@@ -9,6 +9,7 @@ const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "niudao-http-"));
 process.env.NIUDAO_DATA = dataDir;
 process.env.NIUDAO_TARGET = dataDir;
 process.env.NIUDAO_EDGE = "off"; // 单测不联网、不探测 CF 边缘
+process.env.NIUDAO_LEADERBOARD = "http://127.0.0.1:9"; // 必不通：验证降级路径
 
 const { start } = await import("../src/server/http.js");
 const { appendResult } = await import("../src/server/store.js");
@@ -65,10 +66,11 @@ test("bootstrap 带回硬件、维度、指标定义", async () => {
   assert.ok(r.body.hardware.hardware.cpu_model);
   assert.ok(Object.keys(r.body.dimensions).includes("storage"));
   assert.ok(Object.keys(r.body.metrics).includes("disk_rand_read"));
-  // 打包后默认指向内置官方榜
+  // 打包后默认指向内置官方榜（测试里用 NIUDAO_LEADERBOARD 指向一个必不通的本地地址，
+  // 所以这里断言"已配置"而不是"官方"。officialUrl 仍然是官方的。）
   assert.equal(r.body.leaderboard.configured, true);
-  assert.equal(r.body.leaderboard.official, true);
   assert.match(r.body.leaderboard.officialUrl, /^https:\/\//);
+  assert.equal(r.body.settings.autoSubmit, true, "默认测完自动提交");
 });
 
 test("首页静态文件可访问（单页回落）", async () => {
@@ -80,25 +82,28 @@ test("首页静态文件可访问（单页回落）", async () => {
   assert.equal(deep.status, 200, "未知路径回落到单页");
 });
 
-test("未配置排行榜时，天梯接口降级为本地成绩", async () => {
-  await post("/api/settings", { leaderboardUrl: "" }); // 清空 = 只用本地成绩
+test("榜单连不上时，天梯接口降级（旧缓存或明确不可用），不影响本地成绩", async () => {
   appendResult(fakeResult(1));
   appendResult(fakeResult(1.2));
-  const r = await get("/api/leaderboard?dim=overall");
+  const r = await get("/api/leaderboard?dim=overall&refresh=1");
   assert.equal(r.status, 200);
-  assert.equal(r.body.mode, "local");
-  assert.equal(r.body.entries.length, 2);
-  assert.ok(r.body.entries[0].value >= r.body.entries[1].value);
+  // 榜单地址写死后不再有 mode=local 这条路径；连不上时要么给旧缓存(stale)，
+  // 要么明确 unavailable —— 两种都不能让页面报错
+  assert.ok(r.body.mode === "remote");
+  assert.ok(r.body.stale === true || r.body.unavailable === true, "连不上的降级要如实标注");
 });
 
-test("设置校验：非法地址被拒，合法地址被保存", async () => {
-  const bad = await post("/api/settings", { leaderboardUrl: "ftp://x" });
-  assert.equal(bad.status, 400);
-  const ok = await post("/api/settings", { leaderboardUrl: "http://127.0.0.1:9", alias: "老王" });
-  assert.equal(ok.status, 200);
-  assert.equal(ok.body.alias, "老王");
+test("设置：榜单地址写死，不接受用户覆盖；花名与自动提交可改", async () => {
+  const before = await get("/api/settings");
+  const official = before.body.leaderboardUrl;
+
+  const tryOverride = await post("/api/settings", { leaderboardUrl: "http://127.0.0.1:9", alias: "老王" });
+  assert.equal(tryOverride.status, 200);
+  assert.equal(tryOverride.body.alias, "老王", "花名应该能改");
+  assert.equal(tryOverride.body.leaderboardUrl, official, "榜单地址不该被用户改掉");
+
   const after = await get("/api/settings");
-  assert.equal(after.body.leaderboardUrl, "http://127.0.0.1:9");
+  assert.equal(after.body.leaderboardUrl, official);
 });
 
 test("测试目录校验：不存在/非绝对路径/特殊文件系统都立即返回 400（不允许卡死事件循环）", async () => {

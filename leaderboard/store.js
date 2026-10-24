@@ -85,7 +85,11 @@ export class Store {
       if (suite && e.suite !== suite) continue;
       if (arch && e.arch !== arch) continue;
       // 同型号：只看同一颗 CPU，玩家真正想比的就是这个
-      if (cpu && (e.hardware?.cpu_model || "") !== cpu) continue;
+      if (cpu) {
+        // unknown 型号不参与同型号筛选：识别失败的机器不该被当成"同一型号"
+        const model = (e.hardware?.cpu_model || "").trim();
+        if (!model || /^unknown$/i.test(model) || model !== cpu) continue;
+      }
       out.push(e);
     }
     return out;

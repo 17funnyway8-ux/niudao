@@ -188,7 +188,9 @@ async function leaderboard(url, env) {
   const dim = url.searchParams.get("dim") || "overall";
   if (!DIMS[dim]) return json({ error: "dim 不支持" }, 400);
   const arch = url.searchParams.get("arch") || "";
-  const cpu = (url.searchParams.get("cpu") || "").slice(0, 120);
+  // 同型号筛选：unknown / 空型号不参与（否则所有识别失败的虚机会被聚成"同一个型号"）
+  const cpuRaw = (url.searchParams.get("cpu") || "").slice(0, 120);
+  const cpu = /^(unknown|未知|-+|)$/i.test(cpuRaw.trim()) ? "" : cpuRaw;
   const suite = url.searchParams.get("suite") || SUITE_VERSION;
   const limit = Math.min(200, Math.max(1, Number(url.searchParams.get("limit")) || 50));
   const offset = Math.max(0, Number(url.searchParams.get("offset")) || 0);

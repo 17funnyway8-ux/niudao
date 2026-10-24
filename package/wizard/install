@@ -3,16 +3,8 @@
     "stepTitle": "基本设置",
     "items": [
       {
-        "type": "text",
-        "field": "wizard_alias",
-        "label": "花名（上榜显示名）",
-        "initValue": "",
-        "rules": [
-          {
-            "max": 16,
-            "message": "最多 16 个字符"
-          }
-        ]
+        "type": "tips",
+        "helpText": "榜单显示名会自动使用你的主机名（可在应用内改）。"
       },
       {
         "type": "select",

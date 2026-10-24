@@ -132,15 +132,19 @@ export async function diskSeq(targetDir, { sizeMb = 512, onProgress } = {}) {
   let direct = true;
 
   // ---- 顺序写 ----
+  // 计时口径修正：这里测的是"写吞吐"，不是 fsync 延迟。
+  // 原来用 conv=fdatasync 让 dd 在退出前落盘，但那段 fsync 时间也被算进了 wall time，
+  // 于是写在内存里被吞掉（virtio/QEMU 虚机尤其明显）、或者盘上队列深时，
+  // 会把 8 GB/s 甚至几万 MB/s 当成磁盘速度。现在：不 fsync，结束单独 fsync 并只记录不扣分。
   let tw = clock();
-  let w = await runDd(["if=/dev/zero", `of=${file}`, "bs=1M", `count=${mb}`, "oflag=direct", "conv=fdatasync", "status=progress"], 180000, {
+  let w = await runDd(["if=/dev/zero", `of=${file}`, "bs=1M", `count=${mb}`, "oflag=direct", "status=progress"], 180000, {
     onLine: (line) => { try { onProgress?.({ phase: "write", ...line }); } catch { /* 忽略 */ } },
   });
   if (!w.ok) {
     direct = false;
     caveats.push("文件系统不支持 O_DIRECT，顺序测试含页缓存影响，数值仅供参考");
     tw = clock();
-    w = await runDd(["if=/dev/zero", `of=${file}`, "bs=1M", `count=${mb}`, "conv=fdatasync", "status=progress"], 180000, {
+    w = await runDd(["if=/dev/zero", `of=${file}`, "bs=1M", `count=${mb}`, "status=progress"], 180000, {
       onLine: (line) => { try { onProgress?.({ phase: "write", ...line }); } catch { /* 忽略 */ } },
     });
   }
@@ -149,6 +153,10 @@ export async function diskSeq(targetDir, { sizeMb = 512, onProgress } = {}) {
     await rmQuiet(file);
     throw new Error(`顺序写失败: ${w.stderr || w.status}`);
   }
+  // 单独测一次 fsync，只作参考展示（真机 ~几十 ms，虚机可能几秒 —— 这正是"假快"的来源）
+  const fsyncStart = clock();
+  await run("sync", [], 60000).catch(() => {});
+  const fsyncSecs = secs(fsyncStart, clock());
 
   // ---- 顺序读 ----
   let tr = clock();
@@ -171,7 +179,15 @@ export async function diskSeq(targetDir, { sizeMb = 512, onProgress } = {}) {
   return {
     read_mbs: round(mb / readSecs),
     write_mbs: round(mb / writeSecs),
-    detail: { sizeMb: mb, direct, readSecs: round(readSecs), writeSecs: round(writeSecs), freeGb: Math.round(free) },
+    detail: {
+      sizeMb: mb,
+      direct,
+      readSecs: round(readSecs),
+      writeSecs: round(writeSecs),
+      // fsync 耗时只展示、不计分：它衡量的是"落盘延迟"，不是"写吞吐"
+      fsyncSecs: round(fsyncSecs),
+      freeGb: Math.round(free),
+    },
     caveats,
   };
 }

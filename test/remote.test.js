@@ -14,9 +14,16 @@ import { after, before, test } from "node:test";
 const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "niudao-remote-"));
 process.env.NIUDAO_DATA = dataDir;
 process.env.NIUDAO_TARGET = dataDir;
+// 榜单地址已写死，测试用环境变量指向本地假服务
+process.env.NIUDAO_LEADERBOARD = "http://127.0.0.1:1";
 
-const { saveSettings } = await import("../src/server/settings.js");
+const settingsMod = await import("../src/server/settings.js");
 const remote = await import("../src/server/remote.js");
+
+/** 榜单地址写死后，测试里用这个把 DEFAULT_SETTINGS 指到本地假服务 */
+function useBase(url) {
+  settingsMod.DEFAULT_SETTINGS.leaderboardUrl = url;
+}
 
 let hits = 0;
 let hangFirst = 0; // 头 N 个 /api/v1/health 请求故意不回
@@ -42,7 +49,7 @@ before(async () => {
   });
   await new Promise((r) => server.listen(0, "127.0.0.1", r));
   base = `http://127.0.0.1:${server.address().port}`;
-  saveSettings({ leaderboardUrl: base });
+  useBase(base);
 });
 
 after(() => {
@@ -84,8 +91,8 @@ test("4xx/5xx 是业务错误，直接抛且只发一条", async () => {
 });
 
 test("没配地址时明确抛 NO_LEADERBOARD", async () => {
-  saveSettings({ leaderboardUrl: "" });
+  useBase("");
   await assert.rejects(() => remote.leaderboard({}), /NO_LEADERBOARD/);
   assert.equal(remote.isConfigured(), false);
-  saveSettings({ leaderboardUrl: base });
+  useBase(base);
 });

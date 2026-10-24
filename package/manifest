@@ -1,7 +1,7 @@
 appname=niudao
-version=1.3.2
-display_name=牛刀
-desc=给飞牛 NAS 做一次硬件体检：CPU、内存、磁盘十项实测，出综合分与维度分，生成一份能贴到论坛的报告，并和别人的机器排进同一个天梯。
+version=2.0.0
+display_name=牛刀 fnOS Benchmark
+desc=牛刀 · fnOS Benchmark：给飞牛 NAS 做一次硬件体检，CPU、内存、磁盘十项实测，出综合分与维度分，生成一份能贴到论坛的报告，并和别人的机器排进同一个天梯。
 source=thirdparty
 platform=all
 maintainer=fun
@@ -12,4 +12,4 @@ desktop_applaunchname=niudao.main
 install_dep_apps=nodejs_v22:python312
 ctl_stop=true
 checkport=false
-changelog=1.3.2：安全加固 —— 花名与硬件名称过滤控制字符/零宽与双向符；测试目录拒绝系统目录与符号链接；补安全响应头。
+changelog=2.0.0：品牌与体验全面更新 —— 引入 fnOS Benchmark 标识与新配色；安装免填花名（默认主机名）；榜单地址固定、测完自动提交；修复 ARM/虚拟机型号显示 unknown；单项分数封顶，杜绝虚机缓存刷分。

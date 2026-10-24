@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import fs from "node:fs";
 import {
   DIMENSIONS,
   METRIC_KEYS,
+  SUB_CAP,
   computeScores,
   formatMetric,
   gradeOf,
@@ -106,4 +108,26 @@ test("百分位：中位数约 50，最高接近 100，最低 0", () => {
 test("指标展示格式不会出现 NaN", () => {
   assert.match(formatMetric("cpu_single", 1821.44), /1,821/);
   assert.equal(formatMetric("cpu_single", undefined), "—");
+});
+
+test("单项封顶：失真指标不能把总分拉爆（麒麟猪那次事故的回归测试）", () => {
+  const base = JSON.parse(fs.readFileSync(new URL("../src/server/data/baselines.json", import.meta.url), "utf8")).metrics;
+  // 真实数据：Mac mini M4 上的 fnOS 虚机，磁盘读报到 32 GB/s（写在内存里被吞了）
+  const metrics = {
+    cpu_single: 3616,
+    cpu_multi: 12745.6,
+    crypto_aes: 5743.8,
+    zlib: 72.5,
+    mem_copy: 59.87,
+    mem_latency: 41,
+    disk_seq_read: 32094.4,
+    disk_seq_write: 7976.3,
+    disk_rand_read: 159990,
+    disk_rand_write: 29950,
+  };
+  const s = computeScores(metrics, base);
+  assert.ok(s.composite < 3000, `综合分必须被封顶压住，实际 ${s.composite}`);
+  assert.ok(s.subs.disk_seq_read <= SUB_CAP, "单项不超过封顶值");
+  assert.ok(s.capped.includes("disk_seq_read"), "要标出哪些项触顶了");
+  assert.equal(s.partial, true, "有触顶项时报告要标「部分项异常」");
 });

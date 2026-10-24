@@ -5,19 +5,24 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <!-- 走飞牛统一网关时是 /app/niudao/，直连开发时是 /；由服务端在发送时替换 -->
     <base href="__BASE__" />
-    <title>牛刀 · 飞牛性能天梯</title>
+    <title>牛刀 · fnOS Benchmark · 飞牛性能天梯</title>
     <link rel="stylesheet" href="styles.css" />
     <link rel="icon" href="favicon.svg" />
   </head>
   <body>
     <header class="topbar">
       <div class="brand">
-        <svg class="logo" viewBox="0 0 16 16" aria-hidden="true">
-          <rect x="0.5" y="0.5" width="15" height="15" rx="2" fill="none" stroke="currentColor" stroke-width="1.2"/>
-          <path d="M3.6 11.4 6 6.2l1.7 3 1.4-2.1 2.3 4.3" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>
+        <!-- 与应用图标同一套造型：双峰折线 + 右上圆点（圆点是"尖峰"的标记，之前漏了） -->
+        <svg class="logo" viewBox="0 0 32 32" aria-hidden="true">
+          <rect x="1" y="1" width="30" height="30" rx="8" fill="none" stroke="currentColor" stroke-width="2"/>
+          <path d="M7.5 22.5 12 12.5l3.4 6 2.8-4.2 4.6 8.2"
+                fill="none" stroke="currentColor" stroke-width="2.6"
+                stroke-linecap="round" stroke-linejoin="round"/>
+          <circle cx="24.6" cy="9.4" r="2.6" fill="currentColor"/>
         </svg>
         <div class="brand-text">
           <strong>牛刀</strong>
+          <span class="brand-sub">fnOS Benchmark</span>
         </div>
       </div>
       <nav class="tabs" id="tabs">

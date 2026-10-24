@@ -8,7 +8,7 @@
  */
 
 export const SUITE_VERSION = "1.0.0";
-export const CLIENT_VERSION = "1.3.2";
+export const CLIENT_VERSION = "2.0.0";
 
 /** 原始指标定义：unit 展示用，better 决定除法方向 */
 export const METRICS = {
@@ -66,11 +66,35 @@ const round = (n, digits = 0) => {
 };
 
 /** 单个指标归一化到 1000 = 基准机水平 */
+/**
+ * 单项归一化的上限。
+ *
+ * 为什么需要：归一化是线性外推，没有封顶的话一个失真指标就能把总分拉爆。
+ * 真实案例（麒麟猪，Mac mini M4 上的 fnOS 虚机）：磁盘写在内存里被吞掉，
+ * 顺序读报到 32 GB/s → 单项 76506 分 → 存储维度 31112 → 综合 13776，
+ * 把 4 线程的 ARM 虚机顶到了全榜第一。
+ *
+ * 3000 分 = 基准机的 3 倍。家用 NAS 上，单指标跑到基准 3 倍以上，
+ * 基本只能是缓存/虚拟化/测量失真，不是"这台机器真强"。宁可封顶并标注，
+ * 也不能让一个坏数字污染整个榜。
+ */
+export const SUB_CAP = 3000;
+
 export function normalizeMetric(key, raw, baselines) {
   const def = METRICS[key];
   const base = baselines?.[key];
   if (!def || !Number.isFinite(raw) || raw <= 0 || !Number.isFinite(base) || base <= 0) return null;
-  return def.better === "higher" ? (raw / base) * 1000 : (base / raw) * 1000;
+  const value = def.better === "higher" ? (raw / base) * 1000 : (base / raw) * 1000;
+  return value > SUB_CAP ? SUB_CAP : value;
+}
+
+/** 该指标是否触顶（用于在报告里标注"缓存/失真，分数已封顶"） */
+export function isCapped(key, raw, baselines) {
+  const def = METRICS[key];
+  const base = baselines?.[key];
+  if (!def || !Number.isFinite(raw) || !Number.isFinite(base) || base <= 0) return false;
+  const value = def.better === "higher" ? (raw / base) * 1000 : (base / raw) * 1000;
+  return value > SUB_CAP;
 }
 
 /**
@@ -81,9 +105,13 @@ export function normalizeMetric(key, raw, baselines) {
  */
 export function computeScores(metrics, baselines) {
   const subs = {};
+  const capped = [];
   for (const key of METRIC_KEYS) {
     const s = normalizeMetric(key, Number(metrics?.[key]), baselines);
-    if (s !== null) subs[key] = round(s, 1);
+    if (s !== null) {
+      subs[key] = round(s, 1);
+      if (isCapped(key, Number(metrics[key]), baselines)) capped.push(key);
+    }
   }
 
   const dims = {};
@@ -110,7 +138,7 @@ export function computeScores(metrics, baselines) {
 
   const composite = totalWeight > 0 ? round(weighted / totalWeight, 0) : 0;
   const coverage = round(METRIC_KEYS.filter((k) => subs[k] !== undefined).length / METRIC_KEYS.length, 2);
-  return { subs, dims, composite, coverage, partial: totalWeight < 1 || coverage < 1 };
+  return { subs, dims, composite, coverage, capped, partial: totalWeight < 1 || coverage < 1 || capped.length > 0 };
 }
 
 export function gradeOf(composite) {

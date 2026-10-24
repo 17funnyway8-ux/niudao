@@ -7,38 +7,45 @@
 */
 
 :root {
-  --bg: #f6f6f3;
-  --panel: #ffffff;
-  --panel-2: #f0f0ec;
-  --ink: #17181a;
+  /* 配色取自应用图标：#a1e243→#cef466 的嫩绿 + #0b0f14 墨黑。
+     两套主题用同一组变量名，避免暗色下某些组件读不到颜色（--panel/--ink 已并入 --surface/--fg）。 */
+  --bg: #f6f7f3;
+  --surface: #ffffff;
+  --surface-2: rgba(122, 160, 40, 0.06);
+  --fg: #0b0f14;
   --muted: #5c636d;
-  --faint: #8b9099;
-  --line: #d9d9d2;
-  --line-soft: #e9e9e2;
-  --accent: #1f5a94;
-  --accent-soft: #e8eef5;
-  --ok: #2c6e37;
-  --warn: #8a5a00;
-  --bad: #9c2f1e;
-  --radius: 4px;
-  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
-  --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
+  --faint: #8a9099;
+  --line: #dde0d6;
+  --line-soft: #eceee5;
+  /* 图标绿的深色版：#a1e243 在白底上对比度不足，正文/按钮用这个 */
+  --accent: #3f6e12;
+  --accent-soft: rgba(161, 226, 67, 0.18);
+  --ok: #2f7d43;
+  --warn: #9a6b12;
+  --bad: #a8352b;
+  --brand-lime: #a1e243;      /* 图标主绿：只用于高亮块、图表、logo */
+  --brand-lime-light: #cef466;
+  --brand-ink: #0b0f14;
 }
 
 :root[data-theme="dark"] {
-  --bg: #17181a;
-  --panel: #1d1f22;
-  --panel-2: #24262a;
-  --ink: #e6e6e3;
+  --bg: #16181a;
+  --surface: #1d1f22;
+  --surface-2: rgba(161, 226, 67, 0.08);
+  --fg: #e8e9e4;
   --muted: #9ca1a8;
   --faint: #727880;
   --line: #33363b;
   --line-soft: #26292d;
-  --accent: #7fb0dc;
-  --accent-soft: #1e2933;
-  --ok: #7cbf86;
+  /* 暗色下可以直接用图标绿本身，反正背景深 */
+  --accent: #a1e243;
+  --accent-soft: rgba(161, 226, 67, 0.14);
+  --ok: #8fd06a;
   --warn: #d2a24b;
   --bad: #dd8072;
+  --brand-lime: #a1e243;
+  --brand-lime-light: #cef466;
+  --brand-ink: #0b0f14;
 }
 
 * { box-sizing: border-box; }
@@ -46,7 +53,7 @@
 html, body {
   margin: 0;
   background: var(--bg);
-  color: var(--ink);
+  color: var(--fg);
   font: 13.5px/1.55 var(--sans);
   -webkit-font-smoothing: antialiased;
 }
@@ -62,13 +69,24 @@ button { font: inherit; color: inherit; cursor: pointer; }
   gap: 22px;
   padding: 0 20px;
   height: 50px;
-  background: var(--panel);
+  background: var(--surface);
   border-bottom: 1px solid var(--line);
 }
 
 .brand { display: flex; align-items: baseline; gap: 8px; }
+.brand-text { display: flex; flex-direction: column; line-height: 1.15; }
 .brand-text strong { font-size: 15px; letter-spacing: .06em; font-weight: 650; }
-.brand-text span { display: none; }
+/* fnOS Benchmark 副标：名牌式的字距，跟主名字形成两级 */
+.brand-text .brand-sub {
+  display: block;
+  font-size: 9.5px;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+  color: var(--muted);
+  font-weight: 600;
+  margin-top: 1px;
+}
+.brand .logo { width: 22px; height: 22px; }
 .logo { width: 18px; height: 18px; align-self: center; }
 
 .tabs { display: flex; gap: 2px; height: 100%; }
@@ -80,8 +98,8 @@ button { font: inherit; color: inherit; cursor: pointer; }
   color: var(--muted);
   font-size: 13.5px;
 }
-.tab:hover { color: var(--ink); }
-.tab.is-active { color: var(--ink); border-bottom-color: var(--ink); font-weight: 600; }
+.tab:hover { color: var(--fg); }
+.tab.is-active { color: var(--fg); border-bottom-color: var(--fg); font-weight: 600; }
 
 .machine-chip {
   margin-left: auto;
@@ -99,13 +117,13 @@ button { font: inherit; color: inherit; cursor: pointer; }
 
 .icon-btn {
   border: 1px solid var(--line);
-  background: var(--panel);
+  background: var(--surface);
   border-radius: 3px;
   width: 26px; height: 26px;
   display: inline-flex; align-items: center; justify-content: center;
   color: var(--muted);
 }
-.icon-btn:hover { color: var(--ink); border-color: var(--muted); }
+.icon-btn:hover { color: var(--fg); border-color: var(--muted); }
 
 /* ---------- 布局 ---------- */
 .app { max-width: 1080px; margin: 0 auto; padding: 20px 20px 64px; }
@@ -118,7 +136,7 @@ button { font: inherit; color: inherit; cursor: pointer; }
 
 /* ---------- 面板 ---------- */
 .card {
-  background: var(--panel);
+  background: var(--surface);
   border: 1px solid var(--line);
   border-radius: var(--radius);
   padding: 16px 18px;
@@ -144,17 +162,17 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .btn {
   display: inline-flex; align-items: center; gap: 6px;
   border: 1px solid var(--line);
-  background: var(--panel);
+  background: var(--surface);
   border-radius: 3px;
   padding: 6px 12px;
   font-size: 13px;
-  color: var(--ink);
+  color: var(--fg);
 }
-.btn:hover { border-color: var(--muted); background: var(--panel-2); }
+.btn:hover { border-color: var(--muted); background: var(--surface-2); }
 .btn:active { transform: translateY(1px); }
 .btn:disabled { opacity: .45; cursor: not-allowed; }
-.btn.primary { background: var(--ink); border-color: var(--ink); color: var(--panel); font-weight: 600; }
-.btn.primary:hover { background: var(--ink); opacity: .88; }
+.btn.primary { background: var(--fg); border-color: var(--fg); color: var(--surface); font-weight: 600; }
+.btn.primary:hover { background: var(--fg); opacity: .88; }
 .btn.ghost { background: transparent; }
 .btn.danger { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 40%, var(--line)); }
 .btn.sm { padding: 3px 9px; font-size: 12px; }
@@ -241,7 +259,7 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .table td.num, .table th.num { text-align: right; font-family: var(--mono); font-variant-numeric: tabular-nums; }
 .table tbody tr.is-me td { background: var(--accent-soft); }
 .rank-cell { font-family: var(--mono); color: var(--faint); width: 44px; }
-.rank-cell.top { color: var(--ink); font-weight: 600; }
+.rank-cell.top { color: var(--fg); font-weight: 600; }
 
 /* ---------- 键值表 ---------- */
 .kv { display: grid; grid-template-columns: 76px 1fr; gap: 6px 12px; font-size: 12.5px; margin: 0; }
@@ -257,7 +275,7 @@ button { font: inherit; color: inherit; cursor: pointer; }
   font-size: 11px;
   line-height: 16px;
   color: var(--muted);
-  background: var(--panel-2);
+  background: var(--surface-2);
   white-space: nowrap;
 }
 .pill.good { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 35%, var(--line)); background: transparent; }
@@ -287,8 +305,8 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .chart-cursor-line { stroke: var(--muted); stroke-width: 1; stroke-dasharray: 2 2; }
 .chart-tip {
   position: absolute; top: 2px; pointer-events: none;
-  background: var(--panel); border: 1px solid var(--line);
-  padding: 2px 6px; font-family: var(--mono); font-size: 11px; color: var(--ink);
+  background: var(--surface); border: 1px solid var(--line);
+  padding: 2px 6px; font-family: var(--mono); font-size: 11px; color: var(--fg);
 }
 .chart-empty { padding: 16px; text-align: center; color: var(--faint); font-size: 12px; }
 
@@ -304,11 +322,11 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .field label { font-size: 12px; color: var(--muted); }
 .field .hint { font-size: 11.5px; color: var(--faint); }
 input[type="text"], input[type="url"], input[type="password"], input[type="number"], select {
-  background: var(--panel);
+  background: var(--surface);
   border: 1px solid var(--line);
   border-radius: 3px;
   padding: 6px 9px;
-  color: var(--ink);
+  color: var(--fg);
   font: inherit;
   font-size: 13px;
   width: 100%;
@@ -326,7 +344,7 @@ input[type="checkbox"] { width: 14px; height: 14px; accent-color: var(--accent);
   font-size: 12px;
   line-height: 1.7;
 }
-.hint-box code, .notice code { font-family: var(--mono); color: var(--ink); }
+.hint-box code, .notice code { font-family: var(--mono); color: var(--fg); }
 .empty { padding: 28px 16px; text-align: center; color: var(--faint); font-size: 12.5px; }
 .empty h3 { margin: 0 0 4px; font-size: 13px; color: var(--muted); font-weight: 500; }
 
@@ -337,8 +355,8 @@ input[type="checkbox"] { width: 14px; height: 14px; accent-color: var(--accent);
 .toast {
   min-width: 200px; max-width: 360px;
   padding: 8px 11px;
-  background: var(--ink);
-  color: var(--panel);
+  background: var(--fg);
+  color: var(--surface);
   border-radius: 3px;
   font-size: 12.5px;
 }
@@ -548,4 +566,55 @@ input[type="checkbox"] { width: 14px; height: 14px; accent-color: var(--accent);
   padding: 12px 18px;
   border-top: 1px solid var(--line);
   background: var(--bg, #fff);
+}
+
+/* ---------------- 品牌延伸：把图标的"墨黑 + 嫩绿"用到界面上 ----------------
+   原则：绿只做点睛（进度、数据高亮、logo、图表线），不做大面积底色 ——
+   大块嫩绿会让工具界面显得像营销页，也会压低数值的可读性。 */
+
+/* 进度条：墨黑底槽 + 嫩绿填充，跟 logo 的双色关系一致 */
+.progress { background: color-mix(in srgb, var(--brand-ink) 12%, transparent); height: 4px; }
+:root[data-theme="dark"] .progress { background: rgba(255, 255, 255, 0.12); }
+.progress > i {
+  background: linear-gradient(90deg, var(--brand-lime) 0%, var(--brand-lime-light) 100%);
+  box-shadow: 0 0 0 1px rgba(11, 15, 20, 0.06) inset;
+}
+
+/* 品牌位：logo 用嫩绿点缀，名字用墨黑 */
+.brand .logo { color: var(--brand-lime); }
+:root[data-theme="light"] .brand .logo { color: var(--accent); }
+.brand-text strong { color: var(--fg); }
+
+/* 当前激活的页签：底部一条嫩绿，比纯黑更"品牌" */
+.tab.is-active { border-bottom-color: var(--brand-lime); }
+
+/* 分数：数字用墨黑，旁边的小标用绿点提示"这是牛刀的分数" */
+.score-num.is-score::after {
+  content: "";
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-left: 8px;
+  border-radius: 50%;
+  background: var(--brand-lime);
+  vertical-align: super;
+}
+
+/* 实时数值：跳动的那几位用品牌绿，眼睛能立刻抓住 */
+.live-value { color: var(--fg); }
+.live-value.is-live { color: var(--accent); }
+
+/* 卡片标题左侧的品牌标：2px 嫩绿竖条 */
+.card-head h2 { position: relative; padding-left: 10px; }
+.card-head h2::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 3px;
+  height: 13px;
+  border-radius: 2px;
+  background: var(--brand-lime);
+  opacity: .9;
 }

@@ -16,7 +16,7 @@ import { appendFeedback, appendResult, deleteResult, getResult, listFeedback, li
 import { counter, gauge, observe, renderPrometheus } from "./metrics.js";
 import { initLogger, log } from "./log.js";
 import { buildCard, buildMarkdown } from "./report.js";
-import { PATHS, loadBaselines, loadSettings, saveSettings, TARGET_DIR, ensureDataDir } from "./settings.js";
+import { PATHS, defaultAlias, loadBaselines, loadSettings, saveSettings, TARGET_DIR, ensureDataDir } from "./settings.js";
 import * as remote from "./remote.js";
 import { buildReport } from "./feedback.js";
 import { CLIENT_VERSION, DIMENSIONS, METRICS, SUITE_VERSION, computeScores, gradeOf, headline } from "../shared/scoring.js";
@@ -278,7 +278,7 @@ async function startRun(body = {}) {
 
       if (settings.autoSubmit && settings.leaderboardUrl) {
         try {
-          await remote.submit(result, settings.alias);
+          await remote.submit(result, settings.alias || defaultAlias());
           updateResult(result.id, { submitted: true, submittedAt: Date.now() });
           boardCache.clear(); // 自己刚交的成绩要能立刻看到
 
@@ -680,7 +680,6 @@ async function handleApi(req, res, url) {
     let remoteError = null;
     if (remote.isConfigured()) {
       try {
-        const base = String(loadSettings().leaderboardUrl || "").replace(/\/api\/v1$/, "").replace(/\/+$/, "");
         // 整包走 JSON 提交：和成绩提交共用同一条"优选 IP + 对冲重试"的通道。
         // （CF 会拦非浏览器的表单 POST，所以不能改用 form-data。）
         const out = await remote.feedbackSubmit({
@@ -736,13 +735,12 @@ async function handleApi(req, res, url) {
   if (pathname === "/api/settings" && method === "POST") {
     const body = await readBody(req);
     const patch = {};
-    for (const key of ["alias", "leaderboardUrl", "leaderboardToken", "autoSubmit", "targetDir"]) {
+    // leaderboardUrl 不再开放给用户改：榜单地址随包写死。
+    // （自建榜的场景交给服务端常量 + 重新打包，界面不提供入口。）
+    for (const key of ["alias", "autoSubmit", "targetDir"]) {
       if (key in body) patch[key] = body[key];
     }
     if ("diskSizeMb" in body) patch.diskSizeMb = Math.max(64, Math.min(4096, Number(body.diskSizeMb) || 512));
-    if (patch.leaderboardUrl && !/^https?:\/\//i.test(String(patch.leaderboardUrl))) {
-      return json(res, 400, { error: "排行榜地址必须以 http:// 或 https:// 开头" });
-    }
     if (patch.targetDir) {
       // 校验用户填的目录：必须是已存在、可写、是目录。
       // 注意：绝不能对用户输入的路径做 recursive mkdir —— 某些文件系统（如 procfs）的 mkdir

@@ -1,5 +1,6 @@
 /** 路径与配置。数据目录由 cmd/main 通过 NIUDAO_DATA 注入（=$TRIM_PKGVAR），本地开发时落到 ./.data。 */
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { OFFICIAL_LEADERBOARD } from "../shared/endpoints.js";
@@ -21,12 +22,28 @@ export const PATHS = {
   baselines: path.join(HERE, "data", "baselines.json"),
 };
 
+/**
+ * 默认花名 = 主机名。
+ * 绝大多数用户懒得填名字，留空会让榜上一片"匿名机器"；主机名天然可读、
+ * 也符合"这就是我那台 NAS"的直觉。用户在设置里随时能改。
+ */
+export function defaultAlias() {
+  try {
+    const name = os.hostname().split(".")[0].trim();
+    return name ? name.slice(0, 16) : "";
+  } catch {
+    return "";
+  }
+}
+
 export const DEFAULT_SETTINGS = {
-  alias: "",
-  // 打包内置的公共榜单；用户可改成自建地址，或清空只用本地成绩
-  leaderboardUrl: OFFICIAL_LEADERBOARD,
+  alias: defaultAlias(),
+  // 榜单地址写死：不再让用户填。想接自建榜的服务端可以改这个常量后重新打包；
+  // 测试/离线环境可以用 NIUDAO_LEADERBOARD 临时指向本地服务（不暴露给界面）。
+  leaderboardUrl: process.env.NIUDAO_LEADERBOARD || OFFICIAL_LEADERBOARD,
   leaderboardToken: "",
-  autoSubmit: false,
+  // 默认自动提交：测完就能看到自己的名次，这是这个应用的核心体验
+  autoSubmit: true,
   diskSizeMb: 512,
   targetDir: TARGET_DIR,
 };
@@ -39,7 +56,11 @@ export function loadSettings() {
   ensureDataDir();
   try {
     const raw = JSON.parse(fs.readFileSync(PATHS.settings, "utf8"));
-    return { ...DEFAULT_SETTINGS, ...raw };
+    const merged = { ...DEFAULT_SETTINGS, ...raw };
+    // 榜单地址已经写死：存量配置里的旧值（或被人手改的值）一律以常量覆盖
+    merged.leaderboardUrl = DEFAULT_SETTINGS.leaderboardUrl;
+    if (!merged.alias) merged.alias = defaultAlias();
+    return merged;
   } catch {
     return { ...DEFAULT_SETTINGS };
   }

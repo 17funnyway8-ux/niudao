@@ -22,14 +22,58 @@ const readFirst = (...paths) => {
   return null;
 };
 
+/**
+ * ARM 平台补充识别。
+ * 在 Mac mini M4 上的 fnOS 虚机里，/proc/cpuinfo 既没有 model name 也没有 Model/Hardware，
+ * 于是型号一路掉到 "unknown" —— 同型号榜也就没法用了。
+ * 这里按顺序补三个来源：设备树 model、ARM MIDR 寄存器、常见 SoC 特征。
+ */
+function armModel(raw) {
+  // 1) 设备树（裸金属 ARM 板子基本都有）
+  for (const p of ["/proc/device-tree/model", "/sys/firmware/devicetree/base/model"]) {
+    const v = read(p);
+    if (v) return v.replace(/\u0000/g, "").trim();
+  }
+  // 2) DMI（虚拟机里 QEMU 会给个通用名，没信息量）
+  const product = read("/sys/class/dmi/id/product_name");
+  const vendor = read("/sys/class/dmi/id/sys_vendor");
+  const combo = [vendor, product].filter(Boolean).join(" ").trim();
+  const generic = /qemu|virtual machine|kvm|bochs|unknown/i.test(combo);
+  // 3) MIDR：ARM 核心的实现者 + 型号号，能区分 Apple / Cortex-A / Neoverse
+  const part = raw?.match(/^CPU part\s*:\s*(0x[0-9a-f]+)/im)?.[1];
+  const impl = raw?.match(/^CPU implementer\s*:\s*(0x[0-9a-f]+)/im)?.[1]?.toLowerCase();
+  const IMPLEMENTER = { "0x41": "ARM", "0x61": "Apple", "0x48": "HiSilicon", "0x51": "Qualcomm", "0x63": "Ampere" };
+  const PART = {
+    "0x022": "Cortex-A53", "0x023": "Cortex-A35", "0x029": "Cortex-A55", "0x02a": "Cortex-A56",
+    "0x030": "Cortex-A97", "0x031": "Cortex-A76", "0x032": "Cortex-A57", "0x033": "Cortex-A72",
+    "0x034": "Cortex-A75", "0x081": "Cortex-A78", "0x082": "Cortex-A78C", "0x0d0": "Cortex-X1",
+    "0x0d2": "Cortex-X3", "0x0d8": "Neoverse-N1", "0x0d9": "Neoverse-N2",
+  };
+  if (impl || part) {
+    const who = IMPLEMENTER[impl] || (impl ? `Impl${impl}` : "");
+    const what = PART[part?.toLowerCase()] || (part ? `Part${part}` : "");
+    const name = [who, what].filter(Boolean).join(" ");
+    // QEMU 里 ARM 核心型号是真的；Apple 实现者 + 未知 part 时，多半是"私有核心 + 虚拟化报告的通用 part"，
+    // 硬拼会得到 "Apple Cortex-A53" 这种自相矛盾的型号，所以只保留实现者，并在虚拟化时标注。
+    const contradictory = IMPLEMENTER[impl] === "Apple" && PART[part?.toLowerCase()]?.startsWith("Cortex");
+    if (name && !contradictory) return `${name}${generic ? " (虚拟机)" : ""}`;
+    if (IMPLEMENTER[impl] === "Apple") return `Apple Silicon${generic ? " (虚拟机)" : ""}`;
+  }
+  // 4) 厂商/机型名至少比 unknown 强
+  if (combo && !generic) return combo;
+  return null;
+}
+
 function cpuInfo() {
   const warnings = [];
-  let model = readFirst("/proc/cpuinfo") ? null : null;
   const raw = read("/proc/cpuinfo");
   let cores = 0;
+  let model = null;
   if (raw) {
     const m = raw.match(/^model name\s*:\s*(.+)$/m) || raw.match(/^Model\s*:\s*(.+)$/m) || raw.match(/^Hardware\s*:\s*(.+)$/m);
     model = m ? m[1].trim() : null;
+    // 很多 ARM 机器把型号写在 Processor / 第一行 "CPU:" 后面
+    if (!model) model = raw.match(/^Processor\s*:\s*(.+)$/m)?.[1]?.trim() || null;
     const ids = new Set();
     for (const block of raw.split(/\n\s*\n/)) {
       const phys = block.match(/^physical id\s*:\s*(\d+)/m);
@@ -40,6 +84,8 @@ function cpuInfo() {
   } else {
     warnings.push("读不到 /proc/cpuinfo，CPU 型号使用 Node 报告值");
   }
+  // 走到这里还没有型号，说明是 ARM 虚机/特殊平台，再兜一层
+  if (!model) model = armModel(raw);
   const threads = (() => {
     try {
       return os.availableParallelism();

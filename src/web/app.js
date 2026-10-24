@@ -48,7 +48,7 @@ const state = {
   showCard: false,
   run: null,
   poll: null,
-  board: { dim: "overall", arch: "", cpuOnly: false, data: null, loading: false, error: null },
+  board: { dim: "overall", arch: null, cpuOnly: false, data: null, loading: false, error: null },
   deep: { durationSec: 300, loadDisk: false, liveSeries: [] },
   fast: { liveSeries: [] },
 };
@@ -246,7 +246,7 @@ function homeView() {
           ${last ? gradeBadge(last.grade) : ""}
         </div>
         <div class="score-row">
-          <div class="score-num">${last ? num(last.composite) : "—"}<small>综合分</small></div>
+          <div class="score-num is-score">${last ? num(last.composite) : "—"}<small>综合分</small></div>
           <div class="score-meta">
             ${
               last
@@ -508,7 +508,7 @@ function resultView() {
         ${r.scores.partial ? `<span class="pill warn">部分项缺失</span>` : ""}
       </div>
       <div class="score-row">
-        <div class="score-num">${num(s.composite)}<small>综合分</small></div>
+        <div class="score-num is-score">${num(s.composite)}<small>综合分</small></div>
         <div class="score-meta">
           <span class="score-sub">CPU ${num(s.dims?.cpu?.score)} · 内存 ${num(s.dims?.memory?.score)} · 存储 ${num(s.dims?.storage?.score)}</span>
           <span class="faint" style="font-size:11.5px">套件 v${esc(r.suite)} · 基准 1,000 = ${esc(state.boot?.baseline?.machine?.cpu_model || "参考机")}</span>
@@ -588,6 +588,8 @@ function boardView() {
   const b = state.boot?.leaderboard;
   const data = state.board.data;
   const myCpu = state.boot?.hardware?.hardware?.cpu_model || "";
+  const myArch = state.boot?.hardware?.arch || "";
+  if (state.board.arch === null) state.board.arch = myArch; // 首次进入默认只看同架构
   const dims = [
     ["overall", "综合"],
     ["cpu", "CPU"],
@@ -732,7 +734,9 @@ function boardView() {
       ${state.board.cpuOnly ? `当前只看 <b>${esc(myCpu)}</b> 的样本；点上面「同型号」可切回全部机器。<br/>` : ""}
       榜单只接受本套件版本的原始指标，分数由服务端重算 —— 客户端改分数没有用。<br/>
       同一台机器（按硬件指纹认）只保留<b>最好的一次</b>：跑多次、交多次，榜上不会出现两条；重跑出更低的分不会顶掉原成绩。<br/>
-      花名只用来显示，可以重名 —— 区分机器靠指纹，所以和同名的人不会互相覆盖。
+      花名只用来显示，可以重名 —— 区分机器靠指纹，所以和同名的人不会互相覆盖。<br/>
+      <b>分数只在同一架构内直接可比</b>：ARM 与 x86 的指令集、内存模型、磁盘栈都不同，
+      整体榜放在一起只是为了热闹，真正有意义的是「同型号」和按架构筛选。
     </div>
   </div>`;
 }
@@ -784,18 +788,11 @@ function settingsView() {
     <div class="card">
       <div class="card-head"><h2>天梯</h2><span class="sub">默认就和所有装了牛刀的机器排在一起</span></div>
       <div class="field">
-        <label>排行榜地址</label>
-        <input type="url" id="f-leaderboardUrl" placeholder="${officialLb ? "内置公共榜（默认）" : "http://192.168.1.10:8790"}" value="${esc(officialLb ? "" : s.leaderboardUrl || "")}" />
-        <span class="hint">${officialLb ? "留空就用内置公共榜。" : ""}想接自己的榜单服务时，填上地址覆盖默认值。</span>
-      </div>
-      <div class="field">
         <label>花名（榜单显示名）</label>
-        <input type="text" id="f-alias" maxlength="16" placeholder="最多 16 个字，留空则显示 CPU 型号" value="${esc(s.alias || "")}" />
+        <input type="text" id="f-alias" maxlength="16" placeholder="默认用主机名" value="${esc(s.alias || "")}" />
+        <span class="hint">留空就用主机名。榜单地址随应用固定，不需要填。</span>
       </div>
-      <div class="field">
-        <label>提交令牌（可选）</label>
-        <input type="password" id="f-leaderboardToken" placeholder="榜单服务设了 token 才需要填" value="${esc(s.leaderboardToken || "")}" />
-      </div>
+
       <label class="check" style="margin-bottom:16px">
         <input type="checkbox" id="f-autoSubmit" ${s.autoSubmit ? "checked" : ""} />
         测完自动提交（不勾的话，测完手动点提交）
@@ -1042,10 +1039,9 @@ async function loadBoard({ force = false } = {}) {
 }
 
 async function saveSettings() {
+  // 榜单地址与令牌不再由用户填：地址随包写死，令牌走内置公共榜不需要
   const patch = {
-    leaderboardUrl: $("#f-leaderboardUrl")?.value.trim() || "",
     alias: $("#f-alias")?.value.trim() || "",
-    leaderboardToken: $("#f-leaderboardToken")?.value || "",
     autoSubmit: Boolean($("#f-autoSubmit")?.checked),
   };
   const targetDir = $("#f-targetDir")?.value.trim();
