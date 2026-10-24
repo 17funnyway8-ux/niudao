@@ -252,7 +252,11 @@ export async function submit(result, alias) {
     fingerprint: result.fingerprint,
     arch: result.arch,
     alias: alias ?? settings.alias,
-    hardware: result.hardware,
+    // 卷路径是用户自己的目录结构，公共榜上不需要，别带出去
+    hardware: (() => {
+      const { volume, ...rest } = result.hardware || {};
+      return rest;
+    })(),
     metrics: result.metrics,
     durations: result.durations,
     caveats: result.caveats,

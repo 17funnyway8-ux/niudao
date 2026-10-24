@@ -218,8 +218,9 @@ docs/             设计文档
 - ARM 机型走同一套代码（Node + Python 都跨架构），但基准机是 x86，ARM 分数天然偏低，所以榜单默认按架构分开排。
 - 校准机是单台参考机，不是行业标准；它的作用是让"1000 分"有明确含义，而不是宣称权威。
 
-## 上架前需要你补的
+## 上架
 
-- `package/manifest` 里的 `maintainer` / `maintainer_url` 换成你自己。
+- 开发者 / 发布者：`maintainer=fun`、`distributor=fun`（应用中心会显示为「开发者 / 发布者」）。
+- 详情页文案与提交材料清单见 `docs/store-listing.md`。
 - 真机验证：装得上 → 卡片打得开 → start/stop/status 正常 → 数据落在 `TRIM_PKGVAR` → 换用户看不到别人的数据。
 - 若要公开发榜，建议先想清楚内容治理（花名、恶意提交、服务器成本）。
