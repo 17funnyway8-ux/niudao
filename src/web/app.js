@@ -681,13 +681,15 @@ function historyView() {
 /* ---------------- settings ---------------- */
 function settingsView() {
   const s = state.boot?.settings || {};
+  // 内置公共榜是默认值，不把它当"用户填的东西"展示出来
+  const officialLb = state.boot?.leaderboard?.official === true;
   return `<div class="stack" style="max-width:720px">
     <div class="card">
-      <div class="card-head"><h2>天梯</h2><span class="sub">自托管榜单，填地址即可接入</span></div>
+      <div class="card-head"><h2>天梯</h2><span class="sub">默认就和所有装了牛刀的机器排在一起</span></div>
       <div class="field">
         <label>排行榜地址</label>
-        <input type="url" id="f-leaderboardUrl" placeholder="http://192.168.1.10:8790" value="${esc(s.leaderboardUrl || "")}" />
-        <span class="hint">默认是随包内置的官方榜（${esc(state.boot?.leaderboard?.officialUrl || "")}）。填自己的地址可覆盖，清空则只用本地成绩单。</span>
+        <input type="url" id="f-leaderboardUrl" placeholder="${officialLb ? "内置公共榜（默认）" : "http://192.168.1.10:8790"}" value="${esc(officialLb ? "" : s.leaderboardUrl || "")}" />
+        <span class="hint">${officialLb ? "留空就用内置公共榜。" : ""}想接自己的榜单服务时，填上地址覆盖默认值。</span>
       </div>
       <div class="field">
         <label>花名（榜单显示名）</label>
