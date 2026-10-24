@@ -500,6 +500,17 @@ function persistBoardCache() {
   boardSaveTimer.unref?.();
 }
 
+/**
+ * 反馈包里怎么描述"我连的是哪个榜"：
+ * 内置公共榜只说"内置"，自建才显示用户自己填的地址。
+ */
+function describeLeaderboard() {
+  const s = loadSettings();
+  const url = (s.leaderboardUrl || "").trim();
+  if (!url) return "仅本地成绩单";
+  return isOfficial(url) ? "内置公共榜" : "自建榜单";
+}
+
 /** 反馈包里带的环境摘要：够定位问题，但不含隐私（脱敏在 buildReport 里统一做） */
 function feedbackEnv(result) {
   const hw = hardware()?.hardware || result?.hardware || {};
@@ -512,8 +523,9 @@ function feedbackEnv(result) {
     cpu: hw.cpu_model || "",
     threads: hw.threads || "",
     "mem(GB)": hw.mem_gb || "",
-    "榜单地址": loadSettings().leaderboardUrl || "(未配置)",
-    "榜单边缘IP": remote.pinnedEdge() || "(未钉)",
+    // 不写死域名：界面上任何地方都不主动露"是哪个域名"，只有用户自己填了自建地址才显示
+    "榜单": describeLeaderboard(),
+    "榜单连接": remote.pinnedEdge() ? "已连通" : "未连通",
     "已测次数": listResults(500).length,
     "运行时长(分)": Math.round(process.uptime() / 60),
   };

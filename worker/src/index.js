@@ -31,6 +31,22 @@ import {
 
 const MIN_SAMPLES = 30;
 
+/** 榜单对外只暴露这些硬件信息，卷路径与磁盘挂载点一律不外发 */
+function publicHardware(hw) {
+  const h = hw || {};
+  return {
+    cpu_model: h.cpu_model || "",
+    cores: h.cores || 0,
+    threads: h.threads || 0,
+    mem_gb: h.mem_gb || 0,
+    mem_gib: h.mem_gib ?? null,
+    os_version: h.os_version || "",
+    kernel: h.kernel || "",
+    board: h.board || "",
+    gpu: h.gpu || "",
+  };
+}
+
 /** 和自托管端保持同一套规则：花名 + 指纹前 8 位，用于区分同名机器 */
 function nameKeyOf(alias, fingerprint) {
   return `${String(alias || "").trim().toLowerCase()}#${String(fingerprint || "").slice(0, 8)}`;
@@ -196,7 +212,10 @@ async function leaderboard(url, env) {
     arch: r.arch,
     ts: r.ts,
     suite: r.suite,
-    hardware: JSON.parse(r.hardware),
+    // 只给「看得懂硬件」需要的字段。volume（测试卷的真实路径）和 disks（挂载点与容量）
+    // 是算分用的，不是给别人看的 —— 上一版把整份 hardware 原样返回，等于把用户的
+    // 目录结构和磁盘布局贴到公网上。宁可少给，不可多给。
+    hardware: publicHardware(JSON.parse(r.hardware)),
   }));
   // 重名检测：按"花名"计数（不是 nameKey —— 那里面含指纹，按它数永远是 1）。
   // 只在这一页范围内判断足够用：页外同名对用户体验影响很小。

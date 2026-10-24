@@ -265,3 +265,24 @@ test("重名隔离：同名两台机器不会被合并，且能认出哪一条�
   assert.equal(flagged.length, 1);
   assert.equal(flagged[0].id, mineId);
 });
+
+test("榜单不外发卷路径与磁盘挂载点（隐私）", async () => {
+  const env = freshEnv();
+  // 模拟真实提交里带的敏感字段
+  const sub = submission({ fp: "dddd1111dddd1111", cpuModel: "AMD Ryzen 7 5825U" });
+  sub.hardware.volume = "/vol1/@appdata/niudao";
+  sub.hardware.disks = ["/vol1 btrfs 1788GB", "/vol4 ext4 1899GB"];
+  await post(env, sub);
+
+  const r = await jsonBody(await call(env, "/api/v1/leaderboard?dim=overall&limit=10"));
+  assert.equal(r.status, 200);
+  const hw = r.body.entries[0].hardware;
+  assert.ok(!("volume" in hw), "volume 不能出现在公开接口里");
+  assert.ok(!("disks" in hw), "disks 不能出现在公开接口里");
+  const raw = JSON.stringify(r.body);
+  assert.ok(!raw.includes("/vol1"), "接口响应里不该出现任何卷路径");
+  assert.ok(!raw.includes("btrfs"), "接口响应里不该出现文件系统信息");
+  // 该给的还得给
+  assert.equal(hw.cpu_model, "AMD Ryzen 7 5825U");
+  assert.ok(hw.threads > 0);
+});

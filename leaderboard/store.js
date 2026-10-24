@@ -131,11 +131,14 @@ export class Store {
       arch: x.e.arch,
       ts: x.e.ts,
       suite: x.e.suite,
+      // 只给「看得懂硬件」需要的字段。volume / disks 是算分用的，不外发 ——
+      // 那等于把用户的目录结构与磁盘布局贴到公网上。
       hardware: {
         cpu_model: x.e.hardware?.cpu_model || "",
         mem_gb: x.e.hardware?.mem_gb || 0,
         threads: x.e.hardware?.threads || 0,
         board: x.e.hardware?.board || "",
+        os_version: x.e.hardware?.os_version || "",
       },
     }));
 
