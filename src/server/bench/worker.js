@@ -14,7 +14,7 @@ const { durationMs, rounds = 1, warmupMs = 0 } = workerData;
 if (warmupMs > 0) warmup(warmupMs);
 
 const results = [];
-for (let i = 0; i < rounds; i += 1) results.push(kernelWork(durationMs));
+for (let i = 0; i < rounds; i += 1) results.push(kernelWork(durationMs, { onProgress: parentPort }));
 
 const best = results.reduce((a, b) => (b.iters / b.elapsed > a.iters / a.elapsed ? b : a));
 

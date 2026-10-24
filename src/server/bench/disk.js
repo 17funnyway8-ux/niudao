@@ -42,7 +42,7 @@ async function rmQuiet(file) {
  * 进度轮询全超时，用户看到的就是"卡死"。dd / python 都是外部命令，
  * 没有任何理由让主线程陪着等。
  */
-function run(bin, args, timeoutMs) {
+function run(bin, args, timeoutMs, { onLine } = {}) {
   return new Promise((resolve) => {
     let child;
     try {
@@ -68,23 +68,58 @@ function run(bin, args, timeoutMs) {
       }
       finish({ ok: false, status: -1, stdout, stderr: `超时 ${timeoutMs}ms` });
     }, timeoutMs);
+    let pending = "";
     child.stdout?.on("data", (c) => {
       stdout += c;
+      if (!onLine) return;
+      pending += c;
+      let nl = pending.indexOf("\n");
+      while (nl >= 0) {
+        const line = pending.slice(0, nl);
+        pending = pending.slice(nl + 1);
+        if (line.trim()) {
+          try {
+            onLine(JSON.parse(line));
+          } catch {
+            /* 非 JSON 行忽略 */
+          }
+        }
+        nl = pending.indexOf("\n");
+      }
     });
+    // dd 的 status=progress 只在小文件/快盘上不会输出中间行，所以自己按字节量算速率。
+    // 解析所有形如 "123456 bytes ... 123 MB/s" 的片段（中文系统下也可能是 "字节"），
+    // 只用于界面显示，不参与计分。
     child.stderr?.on("data", (c) => {
       stderr += c;
+      if (!onLine) return;
+      const text = String(c);
+      const units = { B: 1, kB: 1e3, MB: 1e6, GB: 1e9, TB: 1e12 };
+      const re = /(\d[\d,]*)\s*(?:bytes|字节)[^\n\r]*?,\s*([\d.,]+)\s*([kKMGT]?B)\/s/g;
+      let m;
+      while ((m = re.exec(text))) {
+        const bytes = Number(m[1].replace(/,/g, ""));
+        const mbs = (Number(m[2].replace(",", ".")) * (units[m[3]] || 1e6)) / 1e6;
+        if (Number.isFinite(mbs) && mbs > 0) {
+          try {
+            onLine({ bytes, mbs: Math.round(mbs * 10) / 10 });
+          } catch {
+            /* 忽略 */
+          }
+        }
+      }
     });
     child.on("error", (err) => finish({ ok: false, status: -1, stdout, stderr: String(err?.message || err) }));
     child.on("close", (code) => finish({ ok: code === 0, status: code, stdout, stderr }));
   });
 }
 
-async function runDd(args, timeoutMs) {
-  const r = await run("dd", args, timeoutMs);
+async function runDd(args, timeoutMs, opts = {}) {
+  const r = await run("dd", args, timeoutMs, opts);
   return { ok: r.ok, status: r.status, stderr: (r.stderr || "").trim().slice(0, 300) };
 }
 
-export async function diskSeq(targetDir, { sizeMb = 512 } = {}) {
+export async function diskSeq(targetDir, { sizeMb = 512, onProgress } = {}) {
   const caveats = [];
   const file = path.join(targetDir, ".niudao-seq.bin");
   const free = await freeGb(targetDir);
@@ -98,12 +133,16 @@ export async function diskSeq(targetDir, { sizeMb = 512 } = {}) {
 
   // ---- 顺序写 ----
   let tw = clock();
-  let w = await runDd(["if=/dev/zero", `of=${file}`, "bs=1M", `count=${mb}`, "oflag=direct", "conv=fdatasync", "status=none"], 180000);
+  let w = await runDd(["if=/dev/zero", `of=${file}`, "bs=1M", `count=${mb}`, "oflag=direct", "conv=fdatasync", "status=progress"], 180000, {
+    onLine: (line) => { try { onProgress?.({ phase: "write", ...line }); } catch { /* 忽略 */ } },
+  });
   if (!w.ok) {
     direct = false;
     caveats.push("文件系统不支持 O_DIRECT，顺序测试含页缓存影响，数值仅供参考");
     tw = clock();
-    w = await runDd(["if=/dev/zero", `of=${file}`, "bs=1M", `count=${mb}`, "conv=fdatasync", "status=none"], 180000);
+    w = await runDd(["if=/dev/zero", `of=${file}`, "bs=1M", `count=${mb}`, "conv=fdatasync", "status=progress"], 180000, {
+      onLine: (line) => { try { onProgress?.({ phase: "write", ...line }); } catch { /* 忽略 */ } },
+    });
   }
   const writeSecs = secs(tw, clock());
   if (!w.ok) {
@@ -113,12 +152,16 @@ export async function diskSeq(targetDir, { sizeMb = 512 } = {}) {
 
   // ---- 顺序读 ----
   let tr = clock();
-  let r = await runDd([`if=${file}`, "of=/dev/null", "bs=1M", ...(direct ? ["iflag=direct"] : []), "status=none"], 180000);
+  let r = await runDd([`if=${file}`, "of=/dev/null", "bs=1M", ...(direct ? ["iflag=direct"] : []), "status=progress"], 180000, {
+    onLine: (line) => { try { onProgress?.({ phase: "read", ...line }); } catch { /* 忽略 */ } },
+  });
   if (!r.ok && direct) {
     direct = false;
     caveats.push("顺序读退化为带缓存模式");
     tr = clock();
-    r = await runDd([`if=${file}`, "of=/dev/null", "bs=1M", "status=none"], 180000);
+    r = await runDd([`if=${file}`, "of=/dev/null", "bs=1M", "status=progress"], 180000, {
+      onLine: (line) => { try { onProgress?.({ phase: "read", ...line }); } catch { /* 忽略 */ } },
+    });
   }
   const readSecs = secs(tr, clock());
   await rmQuiet(file);
@@ -131,6 +174,24 @@ export async function diskSeq(targetDir, { sizeMb = 512 } = {}) {
     detail: { sizeMb: mb, direct, readSecs: round(readSecs), writeSecs: round(writeSecs), freeGb: Math.round(free) },
     caveats,
   };
+}
+
+/** 4K 助手现在会边跑边吐进度行，最后一行（final:true）才是结果；老版本整段 JSON 也兼容 */
+function parseHelperOutput(text) {
+  const lines = String(text || "").split("\n").filter((l) => l.trim());
+  for (let i = lines.length - 1; i >= 0; i -= 1) {
+    try {
+      const obj = JSON.parse(lines[i]);
+      if (obj && obj.final !== undefined) return obj;
+    } catch {
+      /* 不是 JSON 行 */
+    }
+  }
+  try {
+    return JSON.parse(String(text || "").trim());
+  } catch {
+    return null;
+  }
 }
 
 async function pythonBin() {
@@ -147,7 +208,7 @@ async function pythonBin() {
   return null;
 }
 
-export async function diskRandom(targetDir, { fileMb = 512, seconds = 6 } = {}) {
+export async function diskRandom(targetDir, { fileMb = 512, seconds = 6, onProgress } = {}) {
   const caveats = [];
   const bin = await pythonBin();
   if (!bin) {
@@ -161,18 +222,19 @@ export async function diskRandom(targetDir, { fileMb = 512, seconds = 6 } = {}) 
     caveats.push(`可用空间不足，随机测试文件缩小到 ${mb}MB`);
   }
   const args = [HELPER, "--path", file, "--file-mb", String(mb), "--seconds", String(seconds)];
-  const out = await run(bin, args, (seconds * 2 + 120) * 1000);
+  const opts = { onLine: (line) => { try { onProgress?.(line); } catch { /* 回调出错不影响测试 */ } } };
+  const out = await run(bin, args, (seconds * 2 + 120) * 1000, opts);
   let parsed = null;
   try {
-    parsed = JSON.parse((out.stdout || "").trim());
+    parsed = parseHelperOutput(out.stdout);
   } catch {
     parsed = null;
   }
   if (!parsed || parsed.error) {
     // 有些文件系统（少数网络/特殊挂载）不支持 O_DIRECT，退化再试一次
-    const retry = await run(bin, [...args, "--no-direct"], (seconds * 2 + 120) * 1000);
+    const retry = await run(bin, [...args, "--no-direct"], (seconds * 2 + 120) * 1000, opts);
     try {
-      parsed = JSON.parse((retry.stdout || "").trim());
+      parsed = parseHelperOutput(retry.stdout);
       if (parsed) caveats.push("O_DIRECT 失败已退化为带缓存模式，随机 IO 数值偏乐观");
     } catch {
       caveats.push(`4K 随机测试失败: ${(out.stderr || retry.stderr || "").slice(0, 160)}`);

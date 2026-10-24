@@ -5,6 +5,7 @@
 import { cpuMulti, cpuSingle, scalingEfficiency } from "./bench/cpu.js";
 import { runBenchJob } from "./bench/offload.js";
 import { diskRandom, diskSeq, prepareDir } from "./bench/disk.js";
+import { startSampler } from "./bench/thermal.js";
 
 export const STAGES = [
   { key: "cpu_single", label: "CPU 单核", hint: "让一个核心跑满，看你点开应用的响应速度" },
@@ -44,9 +45,16 @@ export async function runSuite({ targetDir, onEvent = () => {}, opts = {} }) {
     }
   };
 
+  // 实时数值流：跑分时不让用户只看一根进度条。CPU 吞吐、磁盘速率、温度每秒上报一次。
+  const live = (payload) => emit({ type: "live", ...payload });
+  const sampler = startSampler((s) => live({ temp: s }), 1000);
+  // 让 UI 在每个阶段开始时清掉上一阶段的实时数字（避免磁盘速率还挂在 CPU 阶段上）
+  live({ stage: null });
+
   const step = async (index, fn) => {
     if (opts.shouldStop?.()) return null;
     const stage = STAGES[index];
+    live({ stage: stage.key });
     emit({ type: "stage", stage: stage.key, label: stage.label, index, status: "start" });
     const started = Date.now();
     try {
@@ -70,7 +78,7 @@ export async function runSuite({ targetDir, onEvent = () => {}, opts = {} }) {
     detail.cpu_single = single.detail;
   }
 
-  const multi = await step(1, () => cpuMulti(cfg.cpuMultiMs));
+  const multi = await step(1, () => cpuMulti(cfg.cpuMultiMs, { onProgress: (p) => live({ cpuMulti: p }) }));
   if (multi) {
     metrics.cpu_multi = Math.round(multi.mops * 10) / 10;
     detail.cpu_multi = multi.detail;
@@ -97,7 +105,7 @@ export async function runSuite({ targetDir, onEvent = () => {}, opts = {} }) {
   });
 
   await step(4, async () => {
-    const seq = await diskSeq(targetDir, { sizeMb: cfg.diskSizeMb });
+    const seq = await diskSeq(targetDir, { sizeMb: cfg.diskSizeMb, onProgress: (p) => live({ diskSeq: p }) });
     metrics.disk_seq_read = seq.read_mbs;
     metrics.disk_seq_write = seq.write_mbs;
     detail.disk_seq = seq.detail;
@@ -106,7 +114,7 @@ export async function runSuite({ targetDir, onEvent = () => {}, opts = {} }) {
   });
 
   await step(5, async () => {
-    const rand = await diskRandom(targetDir, { fileMb: cfg.diskFileMb, seconds: cfg.diskSeconds });
+    const rand = await diskRandom(targetDir, { fileMb: cfg.diskFileMb, seconds: cfg.diskSeconds, onProgress: (p) => live({ diskRandom: p }) });
     if (rand.read_iops) metrics.disk_rand_read = rand.read_iops;
     if (rand.write_iops) metrics.disk_rand_write = rand.write_iops;
     detail.disk_random = rand.detail;
@@ -114,6 +122,7 @@ export async function runSuite({ targetDir, onEvent = () => {}, opts = {} }) {
     return true;
   });
 
+  sampler.stop();
   return {
     metrics,
     durations,

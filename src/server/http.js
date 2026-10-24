@@ -18,7 +18,7 @@ import { initLogger, log } from "./log.js";
 import { buildCard, buildMarkdown } from "./report.js";
 import { PATHS, loadBaselines, loadSettings, saveSettings, TARGET_DIR, ensureDataDir } from "./settings.js";
 import * as remote from "./remote.js";
-import { CLIENT_VERSION, DIMENSIONS, METRICS, SUITE_VERSION, computeScores, gradeOf } from "../shared/scoring.js";
+import { CLIENT_VERSION, DIMENSIONS, METRICS, SUITE_VERSION, computeScores, gradeOf, headline } from "../shared/scoring.js";
 import { OFFICIAL_LEADERBOARD, isOfficial } from "../shared/endpoints.js";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -214,6 +214,21 @@ async function startRun(body = {}) {
         targetDir: target,
         opts,
         onEvent: (ev) => {
+          if (ev.type === "live") {
+            // 实时数值流：CPU 吞吐、磁盘速率、温度，每秒给一次，供跑分页面显示
+            const next = { ...(state.live || {}) };
+            if (ev.stage !== undefined) {
+              if (next.stage !== ev.stage) {
+                for (const k of ["cpuMulti", "diskSeq", "diskRandom"]) delete next[k];
+              }
+              next.stage = ev.stage;
+            }
+            for (const k of ["cpuMulti", "diskSeq", "diskRandom", "temp"]) {
+              if (ev[k] !== undefined) next[k] = ev[k];
+            }
+            state.live = next;
+            return;
+          }
           if (ev.type === "stage") {
             state.stage = ev.stage;
             state.index = ev.index;
@@ -462,6 +477,10 @@ function persistBoardCache() {
   boardSaveTimer.unref?.();
 }
 
+function num1(n) {
+  return Number(n).toLocaleString("zh-CN", { maximumFractionDigits: 1 });
+}
+
 function humanAge(sec) {
   if (sec < 90) return `${Math.round(sec)} 秒`;
   if (sec < 5400) return `${Math.round(sec / 60)} 分钟`;
@@ -646,9 +665,90 @@ async function handleApi(req, res, url) {
     return json(res, 405, { error: "方法不允许" });
   }
 
+  // 体检结论：不是简单复述分数，而是给三句人话 —— 同型号排第几、短板在哪、怎么办。
+  // 跟榜单共用客户端与缓存，连不上公共榜时就只给本地结论，不阻塞页面。
+  if (pathname === "/api/verdict" && method === "GET") {
+    const id = url.searchParams.get("id") || state.resultId || listResults(1)[0]?.id;
+    const result = id ? getResult(id) : null;
+    if (!result) return json(res, 404, { error: "找不到这次成绩" });
+    if ((result.kind || "fast") === "deep") return json(res, 400, { error: "深度档看稳定性报告" });
+
+    const scores = result.scores || {};
+    const dims = scores.dims || {};
+    const summary = headline(scores);
+    const cpuModel = result.hardware?.cpu_model || "";
+    const memGb = result.hardware?.mem_gb || 0;
+    const isSSD = (result.metrics?.disk_rand_read || 0) > 2000;
+    const weakest = summary.weakest;
+
+    // 建议按维度给，别写一堆废话
+    const ADVICE = {
+      cpu: memGb <= 4
+        ? "CPU 是短板，而且内存不大。这台机器适合当纯存储/备份机，别指望它跑转码和虚拟机。"
+        : "CPU 是短板。把转码、索引、病毒扫描挪到闲时跑，体感会明显好一些。",
+      memory: memGb <= 4
+        ? "内存偏少。关掉用不上的容器和应用，比换机器更有效。"
+        : "内存延迟偏高。看看是不是单通道、或者 XMP/EXPO 没开。",
+      storage: isSSD
+        ? "存储是短板。别急着换盘：先确认没在做 RAID 校验/重建，池子剩余空间也别压到 90% 以上。"
+        : "4K 随机只有几百 IOPS，典型机械盘。把系统、应用和 Docker 挪到 SSD 上，提升比换 CPU 大得多。",
+    };
+
+    const lines = [];
+    if (weakest) {
+      const best = summary.strongest;
+      const gap = best && weakest ? Math.round((best.score - weakest.score) * 10) / 10 : null;
+      lines.push(`短板是${weakest.label}${gap !== null ? `（比${best.label}低 ${num1(gap)} 分）` : ""}。`);
+    }
+    if (ADVICE[weakest?.key]) lines.push(ADVICE[weakest.key]);
+
+    const out = {
+      id: result.id,
+      composite: scores.composite,
+      grade: result.grade?.grade || summary.grade,
+      gradeLabel: result.grade?.label || summary.gradeLabel,
+      lines,
+      weakest,
+      strongest: summary.strongest,
+      sameModel: null,
+      board: { configured: remote.isConfigured(), ok: null, error: null },
+    };
+
+    if (remote.isConfigured()) {
+      try {
+        const b = await remote.leaderboard({ dim: "overall", cpu: cpuModel, limit: 1, score: scores.composite });
+        out.sameModel = {
+          cpuModel,
+          total: b.total,
+          rank: b.me?.rank ?? null,
+          percentile: b.me?.percentile ?? null,
+          gated: b.stats?.gated ?? b.total < 30,
+          median: b.stats?.median ?? null,
+          // 有没有人能比：有同型号的其它机器，才有"你超过了多少人"的说法
+          others: Math.max(0, (b.total || 0) - 1),
+        };
+        out.board.ok = true;
+        if (out.sameModel.others === 0) {
+          lines.unshift(`你是这颗 ${cpuModel} 在天梯上的第一个样本${out.sameModel.gated ? "，等人多了就有可比性了" : ""}。`);
+        } else if (out.sameModel.rank) {
+          lines.unshift(`同型号 ${out.sameModel.total} 台里排第 ${out.sameModel.rank}${out.sameModel.median ? `，中位数 ${num1(out.sameModel.median)}` : ""}。`);
+        }
+      } catch (e) {
+        out.board.ok = false;
+        out.board.error = String(e.message || e);
+        // 连不上公共榜不算失败：本地结论照常给，前端自己决定要不要提示
+      }
+    }
+
+    return json(res, 200, out);
+  }
+
   if (pathname === "/api/leaderboard") {
     const dim = url.searchParams.get("dim") || "overall";
     const arch = url.searchParams.get("arch") || "";
+    // 同型号：客户端只传 "1"，真正型号以本机硬件为准（不允许任意字符串注入过滤条件）
+    const cpuOnly = url.searchParams.get("cpu") === "1";
+    const myCpu = hardware()?.hardware?.cpu_model || "";
     const limit = Math.min(200, Number(url.searchParams.get("limit")) || 50);
     if (!remote.isConfigured()) {
       const local = localLeaderboard(dim, limit);
@@ -658,9 +758,9 @@ async function handleApi(req, res, url) {
         me: latest ? { id: latest.id, value: latest.composite, rank: local.entries.findIndex((e) => e.id === latest.id) + 1 || null } : null,
       });
     }
-    const cacheKey = `${dim}|${arch}|${limit}`;
+    const cacheKey = `${dim}|${arch}|${cpuOnly ? myCpu : ""}|${limit}`;
     const force = ["1", "true"].includes(String(url.searchParams.get("refresh") || ""));
-    const params = { dim, arch, limit, score: myBoardScore(dim) };
+    const params = { dim, arch, cpu: cpuOnly ? myCpu : "", limit, score: myBoardScore(dim) };
     const hit = boardCache.get(cacheKey);
 
     // 有缓存就先用缓存铺屏，后台再更新：CF 那条链路好坏看运气，

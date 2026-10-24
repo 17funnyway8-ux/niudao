@@ -1,5 +1,6 @@
 /* 牛刀前端：零框架、零依赖，全部视图用原生 DOM 拼装。 */
 import { bindChartHover, lineChart, roundBars } from "./js/chart.js";
+import { copyScoreCardImage, downloadScoreCardPng, downloadScoreCardSvg, scoreCardDataUrl } from "./card.js";
 
 const $ = (sel, root = document) => root.querySelector(sel);
 
@@ -29,10 +30,15 @@ const state = {
   view: "home",
   resultId: null,
   result: null,
+  verdict: null,
+  verdictLoading: false,
+  showMetrics: false,
+  showCard: false,
   run: null,
   poll: null,
-  board: { dim: "overall", arch: "", data: null, loading: false, error: null },
-  deep: { durationSec: 600, loadDisk: false, liveSeries: [] },
+  board: { dim: "overall", arch: "", cpuOnly: false, data: null, loading: false, error: null },
+  deep: { durationSec: 300, loadDisk: false, liveSeries: [] },
+  fast: { liveSeries: [] },
 };
 
 /* ---------------- api ---------------- */
@@ -116,6 +122,30 @@ function verdictPill(level, headline) {
 }
 
 /* ---------------- home ---------------- */
+/** 跑分时的实时数值面板：让"在跑"这件事看得见，而不只是进度条在动 */
+function livePanel(run) {
+  const live = run?.live || {};
+  const rows = [];
+  if (live.cpuMulti?.mops) {
+    rows.push(`<div class="live-metric"><span class="live-value">${num(live.cpuMulti.mops)}</span><span class="live-unit">MOps/s</span><span class="live-label">多核吞吐</span></div>`);
+  }
+  if (live.diskSeq?.mbs) {
+    rows.push(`<div class="live-metric"><span class="live-value">${num(live.diskSeq.mbs, 1)}</span><span class="live-unit">MB/s</span><span class="live-label">顺序${live.diskSeq.phase === "read" ? "读" : "写"}</span></div>`);
+  }
+  if (live.diskRandom?.iops) {
+    rows.push(`<div class="live-metric"><span class="live-value">${num(live.diskRandom.iops)}</span><span class="live-unit">IOPS</span><span class="live-label">4K 随机${live.diskRandom.progress === "read" ? "读" : "写"}</span></div>`);
+  }
+  const temp = live.temp;
+  if (temp && (temp.cpuC !== null && temp.cpuC !== undefined)) {
+    rows.push(`<div class="live-metric"><span class="live-value ${temp.cpuC >= 90 ? "is-warn" : ""}">${num(temp.cpuC, 1)}</span><span class="live-unit">°C</span><span class="live-label">CPU 温度</span></div>`);
+  }
+  if (temp?.freqMhz) {
+    rows.push(`<div class="live-metric"><span class="live-value">${num(temp.freqMhz)}</span><span class="live-unit">MHz</span><span class="live-label">CPU 频率</span></div>`);
+  }
+  if (!rows.length) return "";
+  return `<div class="live-panel">${rows.join("")}</div>`;
+}
+
 function stageRow(stage, index, run) {
   const key = stage.key;
   const ev = (run?.events || []).filter((e) => e.stage === key && e.type === "stage").at(-1);
@@ -188,6 +218,11 @@ function homeView() {
         </div>
         <div class="score-num" style="font-size:34px">${String(doneCount).padStart(2, "0")} <small>/ ${total} 项完成</small></div>
         <div class="progress"><i style="width:${pct}%"></i></div>
+        ${livePanel(run)}
+        ${(() => {
+          const points = (state.fast.liveSeries || []).map((p) => ({ t: p.t, value: p.cpuC }));
+          return points.length > 2 ? lineChart(points, { unit: "°C", height: 130, label: "温度（实时）", id: "live-temp-fast", threshold: 90, thresholdLabel: "90°C" }) : "";
+        })()}
         <div class="stage-list" style="margin-top:16px">${(boot.stages || []).map((s, i) => stageRow(s, i, run)).join("")}</div>
       </div>`
     : `<div class="card">
@@ -269,7 +304,7 @@ function homeView() {
 
   const lastDeep = boot?.lastDeep;
   const deepPresets = [180, 300, 600, 1200];
-  const deepCard = `<div class="card">
+  const deepCard = `<div class="card deep-card">
       <div class="card-head">
         <h2>持续负载（深度档）</h2>
         <span class="sub">满载运行，测逐轮稳定性与温度</span>
@@ -289,10 +324,11 @@ function homeView() {
         ${deepPresets
           .map(
             (sec) =>
-              `<button class="btn sm ${state.deep.durationSec === sec ? "primary" : "ghost"}" data-action="deep-duration" data-sec="${sec}">${sec / 60} 分钟</button>`,
+              `<button class="btn sm ${state.deep.durationSec === sec ? "primary" : "ghost"}" data-action="deep-duration" data-sec="${sec}">${sec / 60} 分钟${sec === 300 ? "（推荐）" : ""}</button>`,
           )
           .join("")}
       </div>
+      <div class="faint" style="font-size:12px;margin-bottom:10px">烤完立刻再跑一次多核，看满载后还剩多少性能。结果会明确分四档，不会只给个"还行"。</div>
       <label class="check" style="margin-bottom:14px">
         <input type="checkbox" id="deep-disk" ${state.deep.loadDisk ? "checked" : ""} />
         叠加磁盘写压力（更接近 RAID 重建时的机箱温度，但会磨损 SSD）
@@ -413,6 +449,27 @@ function deepResultView(r) {
 }
 
 /* ---------------- result ---------------- */
+/** 报告第一屏的结论：先回答"我这台怎么样"，再谈十行指标 */
+function verdictCard() {
+  const v = state.verdict;
+  if (state.verdictLoading && !v) {
+    return `<div class="verdict"><div class="verdict-line faint">正在生成结论…</div></div>`;
+  }
+  if (!v) return "";
+  const lines = (v.lines || []).map((l) => `<div class="verdict-line">${esc(l)}</div>`).join("");
+  const badge = v.sameModel
+    ? `<span class="pill ${v.sameModel.others ? "good" : ""}">同型号 ${v.sameModel.total} 台</span>`
+    : "";
+  const warn = v.board?.ok === false
+    ? `<div class="faint" style="font-size:11.5px;margin-top:6px">公共榜暂时连不上，以上结论只基于本机成绩。</div>`
+    : "";
+  return `<div class="verdict">
+    <div class="verdict-head">体检结论 ${badge}</div>
+    ${lines}
+    ${warn}
+  </div>`;
+}
+
 function resultView() {
   const r = state.result;
   if (!r) return `<div class="empty"><h3>加载中…</h3></div>`;
@@ -445,19 +502,33 @@ function resultView() {
         </div>
         <span class="spacer"></span>
         <div class="row" style="flex-wrap:wrap">
-          <button class="btn primary" data-action="submit-result" data-id="${esc(r.id)}">提交到天梯</button>
-          <a class="btn" href="api/results/${esc(r.id)}/report.md" target="_blank" rel="noreferrer">Markdown</a>
-          <button class="btn ghost" data-action="copy-card" data-id="${esc(r.id)}">复制成绩卡</button>
+          <button class="btn primary" data-action="download-card" data-id="${esc(r.id)}">保存成绩图</button>
+          <button class="btn" data-action="copy-image" data-id="${esc(r.id)}">复制图片</button>
+          <button class="btn" data-action="copy-share" data-id="${esc(r.id)}">复制晒单文案</button>
+          <button class="btn ghost" data-action="toggle-card" data-id="${esc(r.id)}">${state.showCard ? "收起卡片" : "预览卡片"}</button>
+          <button class="btn ghost" data-action="submit-result" data-id="${esc(r.id)}">提交到天梯</button>
+          <a class="btn ghost" href="api/results/${esc(r.id)}/report.md" target="_blank" rel="noreferrer">Markdown</a>
           <a class="btn ghost" href="api/results/${esc(r.id)}/export.json">JSON</a>
         </div>
       </div>
+      <div class="deep-cta">
+        <div class="deep-cta-title">还想知道这台机器扛不扛得住？</div>
+        <div class="deep-cta-text">快速档只能说明"现在有多快"。深度档会满载烤机 ${state.deep.durationSec / 60} 分钟，看温度和频率会不会掉下来 —— NAS 玩家真正要担心的是这个。</div>
+        <button class="btn primary" data-action="start-deep">跑 ${state.deep.durationSec / 60} 分钟深度体检</button>
+        <button class="btn ghost sm" data-action="go-home-deep">先改时长</button>
+      </div>
+      ${state.showCard ? `<div class="card-preview"><img src="${scoreCardDataUrl(r)}" alt="牛刀成绩卡" /><div class="faint" style="font-size:12px;margin-top:8px">这张就是可以发群的图。保存 PNG 或复制后直接粘贴到微信 / QQ。</div></div>` : ""}
       <div class="divider"></div>
+      ${verdictCard()}
       ${dims.map(([k, d]) => dimBlock(k, d, s.dims?.[k])).join("")}
     </div>
 
     <div class="grid-2">
       <div class="card">
-        <div class="card-head"><h2>原始指标</h2><span class="sub">归一化分 = 实测 / 基准 × 1000</span></div>
+        <details class="metrics-details" ${state.showMetrics ? "open" : ""} id="metrics-details">
+          <summary class="card-head" style="cursor:pointer;list-style:none">
+            <h2>原始指标</h2><span class="sub">归一化分 = 实测 / 基准 × 1000 · 点开展开</span>
+          </summary>
         <table class="table">
           <thead><tr><th>指标</th><th class="num">实测</th><th class="num">归一化</th><th>测法</th></tr></thead>
           <tbody>
@@ -477,6 +548,7 @@ function resultView() {
             ? `<div class="hint-box" style="margin-top:14px">多核扩展效率 <b class="mono">${num(r.detail.scaling, 1)}%</b>（100% = 完美线性；开了超线程的机器通常 40–60%，因为两个逻辑核共享执行单元。这个数字看的是"多核有没有被功耗墙或内存带宽压住"）</div>`
             : ""
         }
+        </details>
       </div>
 
       <div class="card">
@@ -501,6 +573,7 @@ function resultView() {
 function boardView() {
   const b = state.boot?.leaderboard;
   const data = state.board.data;
+  const myCpu = state.boot?.hardware?.hardware?.cpu_model || "";
   const dims = [
     ["overall", "综合"],
     ["cpu", "CPU"],
@@ -512,6 +585,7 @@ function boardView() {
       <div class="row" style="gap:4px">
         ${dims.map(([k, label]) => `<button class="btn sm ${state.board.dim === k ? "primary" : "ghost"}" data-action="board-dim" data-dim="${k}">${label}</button>`).join("")}
       </div>
+      <button class="btn sm ${state.board.cpuOnly ? "primary" : "ghost"}" data-action="board-cpu" title="只和同一颗 CPU 的机器比">${state.board.cpuOnly ? "✓ 同型号" : "同型号"}</button>
       <span class="spacer"></span>
       <select id="board-arch" style="width:auto">
         <option value="" ${state.board.arch === "" ? "selected" : ""}>全部架构</option>
@@ -629,12 +703,14 @@ function boardView() {
         }</span>
         <span class="spacer"></span>
         ${data?.total ? `<span class="pill">${num(data.total)} 台机器</span>` : ""}
+        ${state.board.cpuOnly ? `<span class="pill good">同型号</span>` : ""}
       </div>
       ${filters}
       <div class="divider"></div>
       ${body}
     </div>
     <div class="hint-box">
+      ${state.board.cpuOnly ? `当前只看 <b>${esc(myCpu)}</b> 的样本；点上面「同型号」可切回全部机器。<br/>` : ""}
       榜单只接受本套件版本的原始指标，分数由服务端重算 —— 客户端改分数没有用。同一台机器（按硬件指纹）只保留最好的一次。
     </div>
   </div>`;
@@ -764,6 +840,7 @@ async function applyRoute() {
     if (state.result?.id !== id) {
       try {
         state.result = await api(`/api/results/${encodeURIComponent(id)}`);
+        loadVerdict(id); // 异步，别挡住报告打开
       } catch (e) {
         toast(e.message, "err");
         return navigate("#/home");
@@ -812,6 +889,7 @@ async function openResult(id) {
 
 async function startRun() {
   try {
+    state.fast.liveSeries = [];
     await api("/api/run", { method: "POST", body: JSON.stringify({}) });
     state.view = "home";
     toast("开始体检，约 40 秒");
@@ -853,6 +931,11 @@ function pollRun() {
         const last = state.deep.liveSeries.at(-1);
         if (!last || run.live.t > last.t) state.deep.liveSeries.push({ t: run.live.t, cpuC: run.live.cpuC });
       }
+      if (run.kind !== "deep" && run.status === "running" && run.live?.temp && typeof run.live.temp.cpuC === "number") {
+        const sample = run.live.temp;
+        const series = state.fast.liveSeries;
+        if (!series.length || sample.t > series.at(-1).t) series.push({ t: sample.t, cpuC: sample.cpuC });
+      }
       state.run = run;
       render();
       if (run.status !== "running") {
@@ -872,6 +955,27 @@ function pollRun() {
   }, 900);
 }
 
+/** 结果页的"体检结论"：异步拿，不阻塞报告首屏（公共榜慢也只慢这一块） */
+async function loadVerdict(id) {
+  if (!id) return;
+  state.verdictLoading = true;
+  state.verdict = null;
+  try {
+    const v = await api(`/api/verdict?id=${encodeURIComponent(id)}`);
+    if (state.result?.id === id) {
+      state.verdict = v;
+      render();
+    }
+  } catch (e) {
+    if (state.result?.id === id) {
+      state.verdict = { lines: [], error: e.message };
+      render();
+    }
+  } finally {
+    state.verdictLoading = false;
+  }
+}
+
 async function loadBoard({ force = false } = {}) {
   state.board.loading = true;
   state.board.error = null;
@@ -879,6 +983,7 @@ async function loadBoard({ force = false } = {}) {
   try {
     const q = new URLSearchParams({ dim: state.board.dim, limit: "50" });
     if (state.board.arch) q.set("arch", state.board.arch);
+    if (state.board.cpuOnly) q.set("cpu", "1"); // 同型号：型号由服务端按本机硬件决定
     // 服务端有 30 秒新鲜期缓存（省掉一次 CF 握手）：手动刷新要绕过它
     if (force) q.set("refresh", "1");
     state.board.data = await api(`/api/leaderboard?${q}`);
@@ -949,6 +1054,19 @@ document.addEventListener("click", async (ev) => {
     state.board.dim = el.dataset.dim;
     return loadBoard();
   }
+  if (action === "toggle-metrics") {
+    state.showMetrics = !state.showMetrics;
+    return;
+  }
+  if (action === "go-home-deep") {
+    navigate("#/home");
+    setTimeout(() => document.querySelector(".deep-card")?.scrollIntoView({ behavior: "smooth", block: "center" }), 120);
+    return;
+  }
+  if (action === "board-cpu") {
+    state.board.cpuOnly = !state.board.cpuOnly;
+    return loadBoard();
+  }
   if (action === "board-refresh") return loadBoard({ force: true });
   if (action === "submit-result") {
     try {
@@ -956,10 +1074,60 @@ document.addEventListener("click", async (ev) => {
       if (out?.kept) toast(out.message || "已保留原成绩", "");
       else toast("已提交到天梯", "ok");
       state.result = await api(`/api/results/${id}`);
+      loadVerdict(id); // 提交后名次会变，重新拿结论
       await refreshBoot();
     } catch (e) {
       toast(e.message, "err");
     }
+    return;
+  }
+  if (action === "download-card") {
+    try {
+      await downloadScoreCardPng(state.result);
+      toast("成绩图已保存，发群吧", "ok");
+    } catch (e) {
+      try {
+        downloadScoreCardSvg(state.result);
+        toast("PNG 导出受限，已改为保存 SVG（同样可以发）", "");
+      } catch {
+        toast("保存失败：" + e.message, "err");
+      }
+    }
+    return;
+  }
+  if (action === "copy-image") {
+    try {
+      await copyScoreCardImage(state.result);
+      toast("图片已复制，直接粘贴到微信 / QQ", "ok");
+    } catch (e) {
+      try {
+        await downloadScoreCardPng(state.result);
+        toast("当前环境不允许直接复制图片，已改为保存 PNG", "");
+      } catch {
+        toast("复制失败：" + e.message, "err");
+      }
+    }
+    return;
+  }
+  if (action === "copy-share") {
+    try {
+      const r = state.result;
+      const lines = [
+        `我的 NAS 跑分 ${Math.round(r.scores?.composite || 0)}（牛刀 ${r.grade?.grade || ""} 级）`,
+        `${r.hardware?.cpu_model || ""} / ${r.hardware?.mem_gb || "?"}GB`,
+        `CPU ${Math.round(r.scores?.dims?.cpu?.score || 0)} · 内存 ${Math.round(r.scores?.dims?.memory?.score || 0)} · 存储 ${Math.round(r.scores?.dims?.storage?.score || 0)}`,
+        "飞牛 NAS 性能体检，你也来跑一个？",
+      ];
+      await navigator.clipboard.writeText(lines.join("\n"));
+      toast("晒单文案已复制（配图用「保存成绩图」）", "ok");
+    } catch (e) {
+      toast("复制失败：" + e.message, "err");
+    }
+    return;
+  }
+  if (action === "toggle-card") {
+    state.showCard = !state.showCard;
+    render();
     return;
   }
   if (action === "copy-card") {

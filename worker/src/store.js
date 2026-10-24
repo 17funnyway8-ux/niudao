@@ -1,7 +1,7 @@
 /** D1 查询层。所有分维度排序都走白名单列名，不拼用户输入。 */
 
 /** 统一构造 WHERE 片段（值全部绑定） */
-function whereClause({ suite, arch, above, equal, lt, gt } = {}) {
+function whereClause({ suite, arch, cpu, above, equal, lt, gt } = {}) {
   const parts = [];
   const binds = [];
   if (suite) {
@@ -11,6 +11,11 @@ function whereClause({ suite, arch, above, equal, lt, gt } = {}) {
   if (arch) {
     parts.push("arch = ?");
     binds.push(arch);
+  }
+  if (cpu) {
+    // cpu 是原始型号字符串，全部走绑定参数；这里是精确匹配，跟自托管端一致
+    parts.push("json_extract(hardware, '$.cpu_model') = ?");
+    binds.push(cpu);
   }
   if (Number.isFinite(above)) {
     parts.push("composite > ?");

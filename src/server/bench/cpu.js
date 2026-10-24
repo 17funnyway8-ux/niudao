@@ -20,9 +20,15 @@ export async function cpuSingle(durationMs = 6000) {
 
 function runWorker(durationMs, extra = {}) {
   return new Promise((resolve, reject) => {
-    const w = new Worker(WORKER, { workerData: { durationMs, ...extra } });
+    const { onMessage, ...workerData } = extra;
+    const w = new Worker(WORKER, { workerData: { durationMs, ...workerData } });
     let settled = false;
-    w.once("message", (m) => {
+    w.on("message", (m) => {
+      if (m?.type === "progress") {
+        onMessage?.(m);
+        return;
+      }
+      if (settled) return;
       settled = true;
       resolve(m);
       w.terminate();
@@ -36,7 +42,7 @@ function runWorker(durationMs, extra = {}) {
   });
 }
 
-export async function cpuMulti(durationMs = 6000) {
+export async function cpuMulti(durationMs = 6000, { onProgress } = {}) {
   const threads = (() => {
     try {
       return os.availableParallelism();
@@ -45,7 +51,24 @@ export async function cpuMulti(durationMs = 6000) {
     }
   })();
   const started = performance.now();
-  const results = await Promise.all(Array.from({ length: threads }, () => runWorker(durationMs)));
+  // 每秒汇总各线程的吞吐快照，送给 UI 显示实时数字
+  const latest = new Map();
+  const totalMops = () => [...latest.values()].reduce((sum, m) => sum + m, 0);
+  const results = await Promise.all(
+    Array.from({ length: threads }, (_, i) =>
+      runWorker(durationMs, {
+        onMessage: (m) => {
+          if (m?.type !== "progress") return;
+          latest.set(i, m.mops || 0);
+          try {
+            onProgress?.({ mops: Math.round(totalMops()), elapsed: m.elapsed });
+          } catch {
+            /* 回调异常不影响测试 */
+          }
+        },
+      }),
+    ),
+  );
   const wall = (performance.now() - started) / 1000;
   const iters = results.reduce((s, r) => s + (r.iters || 0), 0);
   const mops = (iters * OPS_PER_ITER) / 1e6 / wall;

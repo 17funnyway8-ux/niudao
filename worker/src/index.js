@@ -164,13 +164,14 @@ async function leaderboard(url, env) {
   const dim = url.searchParams.get("dim") || "overall";
   if (!DIMS[dim]) return json({ error: "dim 不支持" }, 400);
   const arch = url.searchParams.get("arch") || "";
+  const cpu = (url.searchParams.get("cpu") || "").slice(0, 120);
   const suite = url.searchParams.get("suite") || SUITE_VERSION;
   const limit = Math.min(200, Math.max(1, Number(url.searchParams.get("limit")) || 50));
   const offset = Math.max(0, Number(url.searchParams.get("offset")) || 0);
   const scoreRaw = url.searchParams.get("score");
   const score = scoreRaw === null ? null : Number(scoreRaw);
 
-  const where = { suite, arch };
+  const where = { suite, arch, cpu };
   const total = await countOf(env.DB, where);
   const rows = await entriesOf(env.DB, { ...where, dim: DIMS[dim], limit, offset });
   const entries = rows.map((r, i) => ({
@@ -212,6 +213,7 @@ async function leaderboard(url, env) {
     dim,
     suite,
     arch: arch || null,
+    cpu: cpu || null,
     total,
     offset,
     limit,

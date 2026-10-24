@@ -265,9 +265,10 @@ export async function submit(result, alias) {
   return call("/api/v1/submit", { method: "POST", body: payload, token: settings.leaderboardToken });
 }
 
-export async function leaderboard({ dim = "overall", arch = "", limit = 50, offset = 0, score = null } = {}) {
+export async function leaderboard({ dim = "overall", arch = "", cpu = "", limit = 50, offset = 0, score = null } = {}) {
   const q = new URLSearchParams({ dim, limit: String(limit), offset: String(offset) });
   if (arch) q.set("arch", arch);
+  if (cpu) q.set("cpu", cpu);
   if (Number.isFinite(score)) q.set("score", String(score));
   return call(`/api/v1/leaderboard?${q.toString()}`);
 }

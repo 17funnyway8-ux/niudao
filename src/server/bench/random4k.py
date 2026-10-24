@@ -51,11 +51,17 @@ def run(path, size_mb, seconds, direct=True):
             idx = 0
             t0 = time.perf_counter()
             deadline = t0 + seconds
+            next_report = t0 + 1
             while time.perf_counter() < deadline:
                 off = offsets[idx & 8191]
                 idx += 1
                 os.preadv(fd, [view], off)
                 count += 1
+                now = time.perf_counter()
+                if now >= next_report:
+                    # 每秒一行进度（NDJSON），让前端能看到数字在动，而不是干等进度条
+                    print(json.dumps({"progress": "read", "phase": "random", "iops": round(count / (now - t0))}), flush=True)
+                    next_report = now + 1
             dt = time.perf_counter() - t0
             out["rand_read_iops"] = round(count / dt) if dt > 0 else 0
             out["rand_read_lat_us"] = round(dt / max(count, 1) * 1e6, 1)
@@ -75,11 +81,16 @@ def run(path, size_mb, seconds, direct=True):
             idx = 0
             t0 = time.perf_counter()
             deadline = t0 + seconds
+            next_report = t0 + 1
             while time.perf_counter() < deadline:
                 off = offsets[idx & 8191]
                 idx += 1
                 os.pwritev(fdw, [view], off)
                 count += 1
+                now = time.perf_counter()
+                if now >= next_report:
+                    print(json.dumps({"progress": "write", "phase": "random", "iops": round(count / (now - t0))}), flush=True)
+                    next_report = now + 1
             dt = time.perf_counter() - t0
             os.fsync(fdw)
             out["rand_write_iops"] = round(count / dt) if dt > 0 else 0
@@ -103,6 +114,7 @@ def main():
     created = ensure_file(args.path, args.file_mb)
     result = run(args.path, args.file_mb, args.seconds, direct=not args.no_direct)
     result["created"] = created
+    result["final"] = True
     sys.stdout.write(json.dumps(result))
 
 

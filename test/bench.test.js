@@ -72,3 +72,34 @@ test("磁盘 4K 随机：能跑出 IOPS；没有 python 时优雅降级为 null 
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("实时数值流：多核每秒给吞吐快照，磁盘随机有进度行", async () => {
+  let reports = 0;
+  let last = 0;
+  const r = await cpuMulti(1600, {
+    onProgress: (p) => {
+      reports += 1;
+      assert.ok(p.mops > 0, "快照必须有正数");
+      last = p.mops;
+    },
+  });
+  assert.ok(reports > 0, "多核跑分期间应该收到进度");
+  assert.ok(last > 0);
+  assert.ok(r.mops > 0);
+
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "niudao-live-"));
+  try {
+    let progress = 0;
+    const rand = await diskRandom(dir, {
+      fileMb: 16,
+      seconds: 2,
+      onProgress: (p) => {
+        if (p.phase === "random") progress += 1;
+      },
+    });
+    assert.ok(progress > 0, "4K 随机应该有每秒进度行");
+    assert.ok(rand.read_iops > 0, "最终结果行仍要被解析出来（不能被进度行覆盖）");
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});

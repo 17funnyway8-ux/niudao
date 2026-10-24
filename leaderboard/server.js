@@ -209,12 +209,13 @@ const server = http.createServer(async (req, res) => {
       const dim = url.searchParams.get("dim") || "overall";
       if (!["overall", "cpu", "memory", "storage"].includes(dim)) return json(res, 400, { error: "dim 不支持" });
       const arch = url.searchParams.get("arch") || "";
+      const cpu = (url.searchParams.get("cpu") || "").slice(0, 120);
       const suite = url.searchParams.get("suite") || SUITE_VERSION;
       const limit = Math.min(200, Number(url.searchParams.get("limit")) || 50);
       const offset = Math.max(0, Number(url.searchParams.get("offset")) || 0);
       const scoreRaw = url.searchParams.get("score");
       const score = scoreRaw === null ? null : Number(scoreRaw);
-      const data = store.leaderboard({ dim, suite, arch, limit, offset, score: Number.isFinite(score) ? score : null });
+      const data = store.leaderboard({ dim, suite, arch, cpu, limit, offset, score: Number.isFinite(score) ? score : null });
       return json(res, 200, { mode: "remote", ...data });
     }
 

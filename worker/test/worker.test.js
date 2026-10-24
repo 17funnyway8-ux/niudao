@@ -65,21 +65,22 @@ const call = async (env, pathname, init = {}) =>
 const jsonBody = async (res) => ({ status: res.status, body: await res.json() });
 
 let seq = 0;
-function submission({ fp, alias = "", arch = "x64", mult = 1, metrics } = {}) {
+function submission({ fp, alias = "", arch = "x64", mult = 1, metrics, cpuModel } = {}) {
   seq += 1;
   const m =
     metrics ||
     Object.fromEntries(Object.entries(baselines.metrics).map(([k, v]) => [k, k === "mem_latency" ? v / mult : v * mult]));
-  return {
+  const sub = {
     suite: SUITE_VERSION,
     client: "1.0.0",
     fingerprint: fp || String(seq).padStart(16, "0"),
     arch,
     alias,
-    hardware: { cpu_model: `Test CPU ${seq}`, cores: 4, threads: 8, mem_gb: 16, os_version: "1.2.0401", kernel: "6.1" },
+    hardware: { cpu_model: cpuModel || `Test CPU ${seq}`, cores: 4, threads: 8, mem_gb: 16, os_version: "1.2.0401", kernel: "6.1" },
     metrics: m,
     ts: 1700000000000 + seq,
   };
+  return sub;
 }
 
 const post = (env, body) =>
@@ -216,4 +217,32 @@ test("assets.js 与源文件保持一致（防止页面/基准漂移）", async 
   assert.equal((await import("../src/assets.js")).pageHtml, page, "改完页面请跑 node worker/scripts/sync-assets.mjs");
   const baselinesFile = JSON.parse(fs.readFileSync(new URL("../../leaderboard/baselines.json", import.meta.url), "utf8"));
   assert.deepEqual((await import("../src/assets.js")).baselines, baselinesFile);
+});
+
+test("同型号筛选：D1 json_extract 精确匹配，且不筛选时仍是全榜", async () => {
+  const env = freshEnv();
+  await post(env, submission({ fp: "aaaa1111aaaa1111", cpuModel: "Intel Celeron J4125", mult: 1.1 }));
+  await post(env, submission({ fp: "bbbb2222bbbb2222", cpuModel: "Intel Celeron J4125", mult: 1.0 }));
+  await post(env, submission({ fp: "cccc3333cccc3333", cpuModel: "AMD Ryzen 7 5825U", mult: 2.0 }));
+
+  const r = await jsonBody(await call(env, "/api/v1/leaderboard?dim=overall&limit=50&cpu=Intel%20Celeron%20J4125"));
+  assert.equal(r.status, 200);
+  assert.equal(r.body.total, 2);
+  assert.equal(r.body.entries.length, 2);
+  assert.ok(r.body.entries.every((e) => e.hardware.cpu_model === "Intel Celeron J4125"));
+
+  const all = await jsonBody(await call(env, "/api/v1/leaderboard?dim=overall&limit=50"));
+  assert.equal(all.body.total, 3);
+
+  const empty = await jsonBody(await call(env, "/api/v1/leaderboard?dim=overall&limit=50&cpu=Nonexistent"));
+  assert.equal(empty.body.total, 0);
+});
+
+test("同型号排名：score 落在同型号池里，不受别的 CPU 干扰", async () => {
+  const env = freshEnv();
+  await post(env, submission({ fp: "aaaa1111aaaa1111", cpuModel: "Intel Celeron J4125", mult: 1.0 }));
+  await post(env, submission({ fp: "cccc3333cccc3333", cpuModel: "AMD Ryzen 7 5825U", mult: 3.0 }));
+  const r = await jsonBody(await call(env, "/api/v1/leaderboard?dim=overall&limit=50&cpu=Intel%20Celeron%20J4125&score=1000"));
+  assert.equal(r.body.total, 1);
+  assert.equal(r.body.me.rank, 1);
 });

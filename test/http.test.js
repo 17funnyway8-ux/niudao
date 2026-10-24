@@ -175,3 +175,17 @@ test("直连（无前缀）时 base 是 /，开发态不受影响", async () => 
   const health = await get("/api/health");
   assert.equal(health.status, 200);
 });
+
+test("体检结论：三句人话 + 弱项 + 建议；公共榜不通时也不该失败", async () => {
+  const res = await post("/api/settings", { leaderboardUrl: "http://127.0.0.1:9" }); // 必不通
+  assert.equal(res.status, 200);
+  const list = await get("/api/results?limit=1");
+  const id = list.body.items?.[0]?.id;
+  assert.ok(id, "需要至少一条成绩");
+  const v = await get(`/api/verdict?id=${encodeURIComponent(id)}`);
+  assert.equal(v.status, 200);
+  assert.ok(v.body.weakest, "必须有弱项判断");
+  assert.ok(Array.isArray(v.body.lines) && v.body.lines.length >= 1, "必须有结论文本");
+  assert.equal(v.body.board.ok, false, "连不上要如实标记");
+  assert.equal(v.body.sameModel, null);
+});

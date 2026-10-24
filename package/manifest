@@ -1,5 +1,5 @@
 appname=niudao
-version=1.1.4
+version=1.2.0
 display_name=牛刀
 desc=给飞牛 NAS 做一次硬件体检：CPU、内存、磁盘十项实测，出综合分与维度分，生成一份能贴到论坛的报告，并和别人的机器排进同一个天梯。
 source=thirdparty
@@ -12,4 +12,4 @@ desktop_applaunchname=niudao.main
 install_dep_apps=nodejs_v22:python312
 ctl_stop=true
 checkport=false
-changelog=1.1.4：开发者信息更新；体检过程中界面不再卡顿；天梯榜连接更快更稳。
+changelog=1.2.0：成绩卡可保存为图片发群；报告新增体检结论与同型号排名；跑分时实时显示吞吐与温度；深度档默认 5 分钟。

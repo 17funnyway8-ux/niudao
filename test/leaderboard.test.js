@@ -16,8 +16,11 @@ const tmpStore = () => {
 };
 
 let seq = 0;
-const entry = ({ fp = "aaaa1111bbbb2222", arch = "x64", metrics, alias = "", suite = "1.0.0" } = {}) => {
+const entry = ({ fp = "aaaa1111bbbb2222", arch = "x64", metrics, alias = "", suite = "1.0.0", hardware, compositeMult } = {}) => {
   const m = metrics || { ...baselines };
+  if (compositeMult) {
+    for (const k of Object.keys(m)) m[k] = k === "mem_latency" ? m[k] / compositeMult : m[k] * compositeMult;
+  }
   const scores = computeScores(m, baselines);
   seq += 1;
   return {
@@ -27,7 +30,7 @@ const entry = ({ fp = "aaaa1111bbbb2222", arch = "x64", metrics, alias = "", sui
     fingerprint: fp,
     arch,
     alias,
-    hardware: { cpu_model: "Test CPU", mem_gb: 16, threads: 8 },
+    hardware: { cpu_model: "Test CPU", mem_gb: 16, threads: 8, ...(hardware || {}) },
     metrics: m,
     scores,
     grade: gradeOf(scores.composite),
@@ -135,4 +138,29 @@ test("分布直方图按 100 分分桶", () => {
   assert.equal(keys.length, 1);
   assert.equal(keys[0], "1000");
   assert.equal(board.buckets["1000"], 1);
+});
+
+test("同型号过滤：只看同一颗 CPU，跨型号不混榜", () => {
+  const s = tmpStore();
+  s.add(entry({ fp: "aaaa111111111111", compositeMult: 1.1, hardware: { cpu_model: "Intel Celeron J4125" } }));
+  s.add(entry({ fp: "bbbb222222222222", compositeMult: 1.0, hardware: { cpu_model: "Intel Celeron J4125" } }));
+  s.add(entry({ fp: "cccc333333333333", compositeMult: 2.0, hardware: { cpu_model: "AMD Ryzen 7 5825U" } }));
+
+  const j = s.leaderboard({ cpu: "Intel Celeron J4125" });
+  assert.equal(j.total, 2);
+  assert.equal(j.entries.length, 2);
+  assert.ok(j.entries.every((e) => e.hardware.cpu_model === "Intel Celeron J4125"));
+  assert.equal(j.entries[0].hardware.cpu_model, "Intel Celeron J4125");
+  assert.equal(s.leaderboard({}).total, 3, "不筛选时还是全部");
+
+  assert.equal(s.leaderboard({ cpu: "不存在的型号" }).total, 0);
+});
+
+test("同型号过滤与排名计算兼容：me 只在同型号池里排", () => {
+  const s = tmpStore();
+  s.add(entry({ fp: "aaaa111111111111", compositeMult: 1.0, hardware: { cpu_model: "Intel Celeron J4125" } }));
+  s.add(entry({ fp: "cccc333333333333", compositeMult: 3.0, hardware: { cpu_model: "AMD Ryzen 7 5825U" } }));
+  const board = s.leaderboard({ cpu: "Intel Celeron J4125", score: 1000 });
+  assert.equal(board.total, 1);
+  assert.equal(board.me.rank, 1, "强 CPU 不该影响同型号的排名");
 });

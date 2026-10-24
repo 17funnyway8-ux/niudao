@@ -60,11 +60,13 @@ export class Store {
   }
 
   /** 某维度下参与排名的机器（每台机器取其最好成绩） */
-  ranked(suite, arch) {
+  ranked(suite, arch, cpu = "") {
     const out = [];
     for (const e of this.best.values()) {
       if (suite && e.suite !== suite) continue;
       if (arch && e.arch !== arch) continue;
+      // 同型号：只看同一颗 CPU，玩家真正想比的就是这个
+      if (cpu && (e.hardware?.cpu_model || "") !== cpu) continue;
       out.push(e);
     }
     return out;
@@ -76,8 +78,8 @@ export class Store {
     return d && Number.isFinite(d.score) ? d.score : null;
   }
 
-  leaderboard({ dim = "overall", suite = "", arch = "", limit = 50, offset = 0, score = null, excludeId = null }) {
-    const pool = this.ranked(suite, arch)
+  leaderboard({ dim = "overall", suite = "", arch = "", cpu = "", limit = 50, offset = 0, score = null, excludeId = null }) {
+    const pool = this.ranked(suite, arch, cpu)
       .map((e) => ({ e, v: this.valueOf(e, dim) }))
       .filter((x) => Number.isFinite(x.v))
       .sort((a, b) => b.v - a.v || (a.e.ts || 0) - (b.e.ts || 0));

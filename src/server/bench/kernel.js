@@ -7,7 +7,7 @@
  */
 export const OPS_PER_ITER = 16;
 
-export function kernelWork(durationMs) {
+export function kernelWork(durationMs, { onProgress = null } = {}) {
   const table = new Uint32Array(1024);
   for (let i = 0; i < 1024; i += 1) table[i] = (i * 2654435761) >>> 0;
 
@@ -22,6 +22,8 @@ export function kernelWork(durationMs) {
   const start = performance.now();
   const deadline = start + durationMs;
   let rounds = 0;
+  // 每 ~1 秒给一次吞吐快照（只有多核跑分时才开，单核/预热不打扰）
+  let nextReport = start + 1000;
 
   while (performance.now() < deadline) {
     for (let i = 0; i < CHUNK; i += 1) {
@@ -38,6 +40,14 @@ export function kernelWork(durationMs) {
     }
     iters += CHUNK;
     rounds += 1;
+    if (onProgress) {
+      const now = performance.now();
+      if (now >= nextReport) {
+        nextReport = now + 1000;
+        // worker 的 postMessage 是异步的，主线程继续跑；它只负责把数字给 UI 看
+        onProgress.postMessage({ type: "progress", mops: Math.round((iters * OPS_PER_ITER) / 1e6 / ((now - start) / 1000)), elapsed: Math.round(now - start) });
+      }
+    }
     if (rounds > 100000) break; // 保险丝
   }
   const elapsed = performance.now() - start;
