@@ -28,6 +28,11 @@ import {
 } from "./store.js";
 
 const MIN_SAMPLES = 30;
+
+/** 和自托管端保持同一套规则：花名 + 指纹前 8 位，用于区分同名机器 */
+function nameKeyOf(alias, fingerprint) {
+  return `${String(alias || "").trim().toLowerCase()}#${String(fingerprint || "").slice(0, 8)}`;
+}
 const DIMS = { overall: "composite", cpu: "cpu", memory: "memory", storage: "storage" };
 const CORS = {
   "access-control-allow-origin": "*",
@@ -174,10 +179,15 @@ async function leaderboard(url, env) {
   const where = { suite, arch, cpu };
   const total = await countOf(env.DB, where);
   const rows = await entriesOf(env.DB, { ...where, dim: DIMS[dim], limit, offset });
+  // 重名处理：花名只是显示名。dup 用来把"同名的另一个人的成绩"和"我的成绩"分开，
+  // isMine 由调用方传入的 id（本机最近一次上榜的条目）比对得出。
+  const mineId = (url.searchParams.get("mine") || "").slice(0, 64);
   const entries = rows.map((r, i) => ({
     rank: offset + i + 1,
     id: r.id,
     alias: r.alias || "",
+    nameKey: nameKeyOf(r.alias, r.fingerprint),
+    isMine: Boolean(mineId) && r.id === mineId,
     value: r[DIMS[dim]],
     composite: r.composite,
     arch: r.arch,
@@ -185,6 +195,12 @@ async function leaderboard(url, env) {
     suite: r.suite,
     hardware: JSON.parse(r.hardware),
   }));
+  // 重名检测：按"花名"计数（不是 nameKey —— 那里面含指纹，按它数永远是 1）。
+  // 只在这一页范围内判断足够用：页外同名对用户体验影响很小。
+  const counts = new Map();
+  const aliasOf = (e) => String(e.alias || "").trim().toLowerCase();
+  for (const e of entries) counts.set(aliasOf(e), (counts.get(aliasOf(e)) || 0) + 1);
+  for (const e of entries) e.dup = (counts.get(aliasOf(e)) || 0) > 1;
 
   const median = await medianStats(env.DB, { ...where, dim: DIMS[dim] });
   const buckets = await bucketsOf(env.DB, { ...where, dim: DIMS[dim] });

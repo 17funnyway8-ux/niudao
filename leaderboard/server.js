@@ -11,7 +11,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
-import { MIN_SAMPLES, Store } from "./store.js";
+import { MIN_SAMPLES, Store, nameKey } from "./store.js";
 import { validateSubmission } from "../src/shared/schema.js";
 import { SUITE_VERSION, computeScores, gradeOf } from "../src/shared/scoring.js";
 
@@ -210,12 +210,13 @@ const server = http.createServer(async (req, res) => {
       if (!["overall", "cpu", "memory", "storage"].includes(dim)) return json(res, 400, { error: "dim 不支持" });
       const arch = url.searchParams.get("arch") || "";
       const cpu = (url.searchParams.get("cpu") || "").slice(0, 120);
+      const fp = (url.searchParams.get("fp") || "").slice(0, 64);
       const suite = url.searchParams.get("suite") || SUITE_VERSION;
       const limit = Math.min(200, Number(url.searchParams.get("limit")) || 50);
       const offset = Math.max(0, Number(url.searchParams.get("offset")) || 0);
       const scoreRaw = url.searchParams.get("score");
       const score = scoreRaw === null ? null : Number(scoreRaw);
-      const data = store.leaderboard({ dim, suite, arch, cpu, limit, offset, score: Number.isFinite(score) ? score : null });
+      const data = store.leaderboard({ dim, suite, arch, cpu, limit, offset, fingerprint: fp, score: Number.isFinite(score) ? score : null });
       return json(res, 200, { mode: "remote", ...data });
     }
 

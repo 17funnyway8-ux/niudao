@@ -1,6 +1,6 @@
 {
   "name": "niudao",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "private": true,
   "type": "module",
   "description": "牛刀 · 飞牛 fnOS 性能天梯：NAS 性能体检 + 排行榜",

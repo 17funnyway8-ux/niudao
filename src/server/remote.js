@@ -265,10 +265,14 @@ export async function submit(result, alias) {
   return call("/api/v1/submit", { method: "POST", body: payload, token: settings.leaderboardToken });
 }
 
-export async function leaderboard({ dim = "overall", arch = "", cpu = "", limit = 50, offset = 0, score = null } = {}) {
+export async function leaderboard({ dim = "overall", arch = "", cpu = "", limit = 50, offset = 0, score = null, mine = "", fp = "" } = {}) {
   const q = new URLSearchParams({ dim, limit: String(limit), offset: String(offset) });
   if (arch) q.set("arch", arch);
   if (cpu) q.set("cpu", cpu);
+  // 两端的参数名不同：自托管端按指纹（fp）认机器，Worker 端按条目 id（mine）认。
+  // 两者都传，各自取自己认识的那个——不用在客户端区分后端类型。
+  if (mine) q.set("mine", mine);
+  if (fp) q.set("fp", fp);
   if (Number.isFinite(score)) q.set("score", String(score));
   return call(`/api/v1/leaderboard?${q.toString()}`);
 }

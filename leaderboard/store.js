@@ -8,6 +8,23 @@ import path from "node:path";
 /** 样本门槛：少于这个数量不显示百分位（对齐 Speedtest Global Index 的"样本不足不上榜"） */
 export const MIN_SAMPLES = 30;
 
+/**
+ * 榜上"这个人是谁"的判定键。
+ * 花名只是显示名，不保证唯一；真正区分机器的是 fingerprint。
+ * 这里给前端一个短键（不是完整指纹），让客户端能判断"这一行是不是我自己"，
+ * 同时两边都用同一套规则算，避免口径漂移。
+ */
+/** 花名归一（去空格、小写）：只用来判断"重名" */
+export function aliasKey(entry) {
+  return String(entry?.alias || "").trim().toLowerCase();
+}
+
+export function nameKey(entry) {
+  const fp = String(entry?.fingerprint || "").slice(0, 8);
+  const name = String(entry?.alias || "").trim().toLowerCase();
+  return `${name}#${fp}`;
+}
+
 /** 中位数与 95% 置信区间（顺序统计量法，不假设分布） */
 export function medianCI(sortedAsc) {
   const n = sortedAsc.length;
@@ -78,17 +95,35 @@ export class Store {
     return d && Number.isFinite(d.score) ? d.score : null;
   }
 
-  leaderboard({ dim = "overall", suite = "", arch = "", cpu = "", limit = 50, offset = 0, score = null, excludeId = null }) {
+  leaderboard({ dim = "overall", suite = "", arch = "", cpu = "", limit = 50, offset = 0, score = null, excludeId = null, fingerprint = "" }) {
+    // 注意：fingerprint 只用来"认出哪一行是我"，绝不能用它过滤榜单 ——
+    // 否则自己的榜单会被筛成只剩自己一条。
     const pool = this.ranked(suite, arch, cpu)
       .map((e) => ({ e, v: this.valueOf(e, dim) }))
       .filter((x) => Number.isFinite(x.v))
       .sort((a, b) => b.v - a.v || (a.e.ts || 0) - (b.e.ts || 0));
 
     const total = pool.length;
+    // 认"这是我"：优先按条目 id，其次按指纹（调用方可能只知道自己这一版套件的条目）
+    const mine = fingerprint
+      ? pool.find((x) => x.e.fingerprint === fingerprint)?.e.id || ""
+      : "";
+    // 重名 = 花名相同但机器不同。按"花名"计数，不是按 nameKey
+    //（nameKey 里含指纹，按它数永远是 1，等于没做重名检测）
+    const nameCounts = new Map();
+    for (const x of pool) {
+      const k = aliasKey(x.e);
+      nameCounts.set(k, (nameCounts.get(k) || 0) + 1);
+    }
     const entries = pool.slice(offset, offset + limit).map((x, i) => ({
       rank: offset + i + 1,
       id: x.e.id,
       alias: x.e.alias || "",
+      // 重名不是错，但必须让用户知道"这不是我"：nameKey 用来比对，dup 用来标"重名"
+      nameKey: nameKey(x.e),
+      dup: (nameCounts.get(aliasKey(x.e)) || 0) > 1,
+      // isMine 的兜底语义：指纹相同也算我（自托管端按指纹认，Worker 端按 id 认）
+      isMine: Boolean(fingerprint) && (x.e.id === mine || x.e.fingerprint === fingerprint),
       value: x.v,
       composite: x.e.scores.composite,
       arch: x.e.arch,

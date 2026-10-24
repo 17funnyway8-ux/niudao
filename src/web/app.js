@@ -676,15 +676,20 @@ function boardView() {
         <tbody>
           ${data.entries
             .map(
-              (e) => `<tr class="${me && e.rank === me.rank ? "is-me" : ""}">
+              (e) => {
+                // "这一行是不是我"必须按机器身份判断，不能按名次：重名时名次也对不上
+                const mineRow = e.isMine !== undefined ? e.isMine : me && e.rank === me.rank;
+                const label = e.alias || (data.mode === "remote" ? e.hardware?.cpu_model || "匿名机器" : "本机 · " + (e.hardware?.cpu_model || ""));
+                return `<tr class="${mineRow ? "is-me" : ""}">
                 <td class="rank-cell ${e.rank <= 3 ? "top" : ""}">${e.rank}</td>
                 <td>
-                  <div class="truncate">${esc(e.alias || (data.mode === "remote" ? e.hardware?.cpu_model || "匿名机器" : "本机 · " + (e.hardware?.cpu_model || "")))}</div>
-                  <div class="faint" style="font-size:11.5px">${esc(e.hardware?.cpu_model || "")}${e.hardware?.mem_gb ? ` · ${e.hardware.mem_gb}GB` : ""}${e.arch ? ` · ${esc(e.arch)}` : ""}</div>
+                  <div class="truncate">${esc(label)}${mineRow ? ` <span class="pill good" style="font-size:10px">我的</span>` : ""}</div>
+                  <div class="faint" style="font-size:11.5px">${esc(e.hardware?.cpu_model || "")}${e.hardware?.mem_gb ? ` · ${e.hardware.mem_gb}GB` : ""}${e.arch ? ` · ${esc(e.arch)}` : ""}${e.dup && !mineRow ? ` · <span title="花名相同，但这是另一台机器">同名不同机</span>` : ""}</div>
                 </td>
                 <td class="num">${num(e.value)}</td>
                 <td class="num faint">${num(e.composite)}</td>
-              </tr>`,
+              </tr>`;
+              },
             )
             .join("")}
         </tbody>
@@ -711,7 +716,9 @@ function boardView() {
     </div>
     <div class="hint-box">
       ${state.board.cpuOnly ? `当前只看 <b>${esc(myCpu)}</b> 的样本；点上面「同型号」可切回全部机器。<br/>` : ""}
-      榜单只接受本套件版本的原始指标，分数由服务端重算 —— 客户端改分数没有用。同一台机器（按硬件指纹）只保留最好的一次。
+      榜单只接受本套件版本的原始指标，分数由服务端重算 —— 客户端改分数没有用。<br/>
+      同一台机器（按硬件指纹认）只保留<b>最好的一次</b>：跑多次、交多次，榜上不会出现两条；重跑出更低的分不会顶掉原成绩。<br/>
+      花名只用来显示，可以重名 —— 区分机器靠指纹，所以和同名的人不会互相覆盖。
     </div>
   </div>`;
 }

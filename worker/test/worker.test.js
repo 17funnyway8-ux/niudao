@@ -246,3 +246,22 @@ test("同型号排名：score 落在同型号池里，不受别的 CPU 干扰", 
   assert.equal(r.body.total, 1);
   assert.equal(r.body.me.rank, 1);
 });
+
+test("重名隔离：同名两台机器不会被合并，且能认出哪一条是我", async () => {
+  const env = freshEnv();
+  await post(env, submission({ fp: "aaaa1111aaaa1111", alias: "老王", cpuModel: "CPU X", mult: 1.2 }));
+  await post(env, submission({ fp: "bbbb2222bbbb2222", alias: "老王", cpuModel: "CPU X", mult: 1.0 }));
+
+  const r = await jsonBody(await call(env, "/api/v1/leaderboard?dim=overall&limit=50"));
+  assert.equal(r.body.total, 2, "重名不能合并");
+  assert.equal(r.body.entries.length, 2);
+  assert.equal(r.body.entries.filter((e) => e.dup).length, 2, "同名两台都应标记重名");
+  assert.ok(r.body.entries.every((e) => e.nameKey && e.isMine === false), "没传身份时不能乱认");
+  assert.notEqual(r.body.entries[0].nameKey, r.body.entries[1].nameKey, "nameKey 必须区分机器");
+
+  const mineId = r.body.entries[1].id;
+  const mine = await jsonBody(await call(env, `/api/v1/leaderboard?dim=overall&limit=50&mine=${mineId}`));
+  const flagged = mine.body.entries.filter((e) => e.isMine);
+  assert.equal(flagged.length, 1);
+  assert.equal(flagged[0].id, mineId);
+});

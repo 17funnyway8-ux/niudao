@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
-import { MIN_SAMPLES, Store, medianCI } from "../leaderboard/store.js";
+import { MIN_SAMPLES, Store, medianCI, nameKey } from "../leaderboard/store.js";
 import { computeScores, gradeOf } from "../src/shared/scoring.js";
 
 const baselines = JSON.parse(
@@ -16,10 +16,11 @@ const tmpStore = () => {
 };
 
 let seq = 0;
-const entry = ({ fp = "aaaa1111bbbb2222", arch = "x64", metrics, alias = "", suite = "1.0.0", hardware, compositeMult } = {}) => {
+const entry = ({ fp = "aaaa1111bbbb2222", arch = "x64", metrics, alias = "", suite = "1.0.0", hardware, compositeMult, mult } = {}) => {
   const m = metrics || { ...baselines };
-  if (compositeMult) {
-    for (const k of Object.keys(m)) m[k] = k === "mem_latency" ? m[k] / compositeMult : m[k] * compositeMult;
+  const scale = compositeMult ?? mult;
+  if (scale) {
+    for (const k of Object.keys(m)) m[k] = k === "mem_latency" ? m[k] / scale : m[k] * scale;
   }
   const scores = computeScores(m, baselines);
   seq += 1;
@@ -163,4 +164,31 @@ test("同型号过滤与排名计算兼容：me 只在同型号池里排", () =>
   const board = s.leaderboard({ cpu: "Intel Celeron J4125", score: 1000 });
   assert.equal(board.total, 1);
   assert.equal(board.me.rank, 1, "强 CPU 不该影响同型号的排名");
+});
+
+test("重名不影响成绩隔离：同名两台机器各有各的条目，能认出哪条是我", () => {
+  const s = tmpStore();
+  const a = entry({ fp: "aaaa111122223333", alias: "老王", mult: 1.2 });
+  const b = entry({ fp: "bbbb444455556666", alias: "老王", mult: 1.0 });
+  s.add(a);
+  s.add(b);
+
+  const board = s.leaderboard({ fingerprint: a.fingerprint });
+  assert.equal(board.total, 2, "重名不能合并，两台机器都在榜上");
+  const mine = board.entries.filter((e) => e.isMine);
+  assert.equal(mine.length, 1, "只能认出一行是我");
+  assert.equal(mine[0].id, a.id, "认出来的是我这台机器的那条");
+  // dup 的语义：花名相同、但机器不同 —— 足够提醒用户"这不是我"
+  assert.equal(board.entries.length, 2);
+  assert.equal(board.entries.filter((e) => e.dup).length, 2, "同名两台机器都应标记重名");
+  assert.ok(board.entries.some((e) => e.isMine), "至少有一行认得出是我");
+  assert.notEqual(nameKey(a), nameKey(b), "名字相同但 nameKey 必须不同");
+});
+
+test("不传身份时不会把别人的行误判成我的", () => {
+  const s = tmpStore();
+  s.add(entry({ fp: "aaaa111122223333", alias: "老王" }));
+  s.add(entry({ fp: "bbbb444455556666", alias: "老王" }));
+  const board = s.leaderboard({});
+  assert.equal(board.entries.filter((e) => e.isMine).length, 0);
 });

@@ -401,6 +401,28 @@ const BOARD_TTL_MS = 30_000; // 新鲜期内切页面直接用，不劳烦网络
 const BOARD_STALE_MS = 7 * 24 * 3600_000; // 连不上时可以退到磁盘缓存，但要老实说是哪天抓的
 const BOARD_FAILED_MS = 5 * 60_000; // 后台更新失败后，多久之内要老实告诉用户"这是旧数据"
 
+/**
+ * 本机身份：榜单里"哪一列是我"靠它认。
+ * - id  = 本机最近一次快速档成绩在上榜时的条目 id（Worker 端按它比对）
+ * - fp  = 硬件指纹（自托管端按它比对；指针对单机历史更稳）
+ * 花名可能重名，所以绝不能用花名判断"这是我"。
+ */
+function myIdentity() {
+  const latest = getResult(state.resultId) || listResults(5).find((r) => r.kind !== "deep") || null;
+  return {
+    // Worker 端：本机最近一次上榜的条目 id。提交时服务端会 upsert，id 会变成新条目，
+    // 所以缓存清掉后重新拉一次就能拿到新 id；拿不到时靠下面的 fp 兜底。
+    id: latest?.submitted && resultBelongsToBoard(latest) ? latest.id : "",
+    // 自托管端：硬件指纹（同一台机器稳定不变）
+    fp: latest?.fingerprint || "",
+  };
+}
+
+/** 条目是否在线上榜上（提交过的才算，没提交的 id 在线榜上不存在） */
+function resultBelongsToBoard(result) {
+  return Boolean(result?.submitted);
+}
+
 /** 拿本机最近一次快速档成绩，用于榜单里的「我排第几」。深度档没有综合分，跳过。 */
 function myBoardScore(dim) {
   const latest = getResult(state.resultId) || listResults(20).find((r) => r.kind !== "deep") || null;
@@ -716,7 +738,8 @@ async function handleApi(req, res, url) {
 
     if (remote.isConfigured()) {
       try {
-        const b = await remote.leaderboard({ dim: "overall", cpu: cpuModel, limit: 1, score: scores.composite });
+        const ident = myIdentity();
+        const b = await remote.leaderboard({ dim: "overall", cpu: cpuModel, limit: 1, score: scores.composite, mine: ident.id, fp: ident.fp });
         out.sameModel = {
           cpuModel,
           total: b.total,
@@ -760,7 +783,8 @@ async function handleApi(req, res, url) {
     }
     const cacheKey = `${dim}|${arch}|${cpuOnly ? myCpu : ""}|${limit}`;
     const force = ["1", "true"].includes(String(url.searchParams.get("refresh") || ""));
-    const params = { dim, arch, cpu: cpuOnly ? myCpu : "", limit, score: myBoardScore(dim) };
+    const ident = myIdentity();
+    const params = { dim, arch, cpu: cpuOnly ? myCpu : "", limit, mine: ident.id, fp: ident.fp, score: myBoardScore(dim) };
     const hit = boardCache.get(cacheKey);
 
     // 有缓存就先用缓存铺屏，后台再更新：CF 那条链路好坏看运气，

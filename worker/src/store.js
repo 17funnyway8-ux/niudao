@@ -51,7 +51,7 @@ export async function entriesOf(db, { dim = "composite", limit = 50, offset = 0,
   const order = "DESC";
   const rows = await db
     .prepare(
-      `SELECT id, ts, suite, arch, alias, hardware, composite, cpu, memory, storage
+      `SELECT id, ts, suite, arch, alias, fingerprint, hardware, composite, cpu, memory, storage
          FROM entries ${sql}
         ORDER BY ${dim} ${order}, ts ASC
         LIMIT ? OFFSET ?`,

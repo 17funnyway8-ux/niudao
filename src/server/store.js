@@ -26,6 +26,8 @@ function toSummary(r) {
     grade: r.grade?.grade ?? "",
     cpu_model: r.hardware?.cpu_model ?? "",
     arch: r.arch,
+    // 摘要里必须带指纹：看榜时要用它判断"哪一行是我"（花名可能重名）
+    fingerprint: r.fingerprint ?? "",
     submitted: Boolean(r.submitted),
     partial: Boolean(r.scores?.partial),
     verdict: r.stability?.verdict?.headline ?? "",
@@ -52,6 +54,7 @@ function summaryFromRow(row) {
     cpu_model: row.cpu_model ?? "",
     mem_gb: row.mem_gb ?? null,
     arch: row.arch,
+    fingerprint: row.fingerprint ?? "",
     submitted: Boolean(row.submitted),
     partial: false,
     verdict: row.verdict ?? "",
