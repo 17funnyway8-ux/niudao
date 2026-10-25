@@ -853,55 +853,84 @@ function boardView() {
 
   return `<div class="stack">
     <div class="card">
-      <div class="card-head"><h2>天梯</h2><span class="sub">默认就和所有装了牛刀的机器排在一起</span></div>
-      <div class="field">
-        <div class="field-label">榜单显示名</div>
-        <div class="alias-fixed">${esc(state.boot?.settings?.alias || state.boot?.hostname || "—")}</div>
-        <p class="field-hint">
-          固定使用本机的设备名称（安装时自动读取），不提供自定义。
-          展示名会公开在天梯榜上，交给用户随意填写会带来审核与法律风险。
-          想改名请改飞牛的设备名称。
-        </p>
+      <div class="card-head"><h2>天梯</h2>
+        <span class="sub">${
+          data?.mode === "remote"
+            ? state.boot?.leaderboard?.official
+              ? "官方榜"
+              : "自建榜单"
+            : "本机成绩"
+        }</span>
+        <span class="spacer"></span>
+        ${data?.total ? `<span class="pill">${num(data.total)} 台机器</span>` : ""}
+        ${state.board.cpuOnly ? `<span class="pill good">同型号</span>` : ""}
       </div>
-      <div class="field">
-        <label class="check">
-          <input type="checkbox" id="f-autoSubmit" ${state.boot?.settings?.autoSubmit !== false ? "checked" : ""} />
-          测完自动提交
-        </label>
-        <p class="field-hint">关掉的话，成绩只留在本机，需要手动点提交才上榜。</p>
-      </div>
-      <div class="row" style="gap:8px;margin-top:14px">
-        <button class="btn" data-action="save-settings">保存</button>
-        <button class="btn ghost" data-action="test-conn">测试连接</button>
-        <span class="faint" id="conn-state" style="font-size:12px"></span>
-      </div>
-    </div>
-
-    <div class="card tight">
-      <div class="card-head"><h2>关于</h2></div>
-      <dl class="kv">
-        <dt>版本</dt><dd class="mono">v${esc(state.boot?.client || "—")} · 套件 v${esc(state.boot?.suite || "—")}</dd>
-        <dt>基准机</dt><dd>${esc(state.boot?.baseline?.machine?.cpu_model || "—")}</dd>
-        <dt>数据</dt><dd class="faint">本机成绩存在应用数据目录（results.jsonl），删除应用前先导出。</dd>
-      </dl>
+      ${filters}
       <div class="divider"></div>
-      <div class="row" style="gap:10px;flex-wrap:wrap;align-items:center">
-        <button class="btn" data-action="open-feedback">反馈问题 / 发送日志</button>
-        <span class="faint" style="font-size:12px">发现算错、卡住、看不懂 —— 点这里，带上环境与日志，我才能改得动。</span>
-      </div>
+      ${body}
+    </div>
+    <div class="hint-box">
+      ${state.board.cpuOnly ? `当前只看 <b>${esc(myCpu)}</b> 的样本；点上面「同型号」可切回全部机器。<br/>` : ""}
+      榜单只接受本套件版本的原始指标，分数由服务端重算 —— 客户端改分数没有用。<br/>
+      同一台机器（按硬件指纹认）只保留<b>最好的一次</b>：跑多次、交多次，榜上不会出现两条；重跑出更低的分不会顶掉原成绩。<br/>
+      花名只用来显示，可以重名 —— 区分机器靠指纹，所以和同名的人不会互相覆盖。<br/>
+      <b>分数只在同一架构内直接可比</b>：ARM 与 x86 的指令集、内存模型、磁盘栈都不同，
+      整体榜放在一起只是为了热闹，真正有意义的是「同型号」和按架构筛选。<br/>
+      <b>物理机与虚拟机分开排名</b>：虚拟机的 CPU/内存/磁盘都是宿主的，磁盘还常被页缓存放大，
+      混在一起比没有意义。判定依据来自内核（DMI 特征 + hypervisor 标志位），报告里会写出来。
     </div>
   </div>`;
 }
 
+/* ---------------- history ---------------- */
+function historyView() {
+  const items = state.boot?.history || [];
+  if (!items.length) {
+    return `<div class="card"><div class="empty"><h3>还没有成绩单</h3><div>去「体检」跑一次。</div></div></div>`;
+  }
+  return `<div class="card">
+    <div class="card-head"><h2>成绩单</h2><span class="sub">本机历史，最多显示 30 条</span></div>
+    <table class="table">
+      <thead><tr><th>时间</th><th>类型</th><th class="num">分数 / 结论</th><th class="num">CPU</th><th class="num">内存</th><th class="num">存储</th><th></th></tr></thead>
+      <tbody>
+        ${items
+          .map((r) => {
+            const isDeep = r.kind === "deep";
+            return `<tr>
+              <td class="nowrap">
+                <button class="btn sm ghost" data-action="open-result" data-id="${esc(r.id)}">${new Date(r.ts).toLocaleString("zh-CN", { hour12: false })}</button>
+                ${r.partial ? `<span class="pill warn">不完整</span>` : ""}
+                ${r.submitted ? `<span class="pill good">已提交</span>` : ""}
+              </td>
+              <td>${isDeep ? `<span class="pill">稳定性</span>` : `<span class="pill good">性能</span>`}</td>
+              <td class="num">${
+                isDeep
+                  ? `${verdictPill(r.verdictLevel, r.verdict)} ${r.maxTempC ? `<span class="faint">${num(r.maxTempC, 1)}°C</span>` : ""}`
+                  : `<span class="mono">${num(r.composite)}</span> ${gradeBadge(r.grade)}`
+              }</td>
+              <td class="num">${isDeep ? "—" : num(r.dims?.cpu?.score)}</td>
+              <td class="num">${isDeep ? "—" : num(r.dims?.memory?.score)}</td>
+              <td class="num">${isDeep ? "—" : num(r.dims?.storage?.score)}</td>
+              <td class="num"><button class="btn sm danger" data-action="delete-result" data-id="${esc(r.id)}">删除</button></td>
+            </tr>`;
+          })
+          .join("")}
+      </tbody>
+    </table>
+  </div>`;
+}
+
+/* ---------------- settings ---------------- */
 function settingsView() {
   const s = state.boot?.settings || {};
-  const displayName = s.alias || state.boot?.hostname || "（读取中）";
+  // 内置公共榜是默认值，不把它当"用户填的东西"展示出来
+  const officialLb = state.boot?.leaderboard?.official === true;
   return `<div class="stack" style="max-width:720px">
     <div class="card">
       <div class="card-head"><h2>天梯</h2><span class="sub">默认就和所有装了牛刀的机器排在一起</span></div>
       <div class="field">
         <div class="field-label">榜单显示名</div>
-        <div class="alias-fixed">${esc(displayName)}</div>
+        <div class="alias-fixed">${esc(s.alias || state.boot?.hostname || "（读取中）")}</div>
         <p class="field-hint">
           固定使用本机的设备名称（安装时自动读取），不提供自定义。
           展示名会公开在天梯榜上，交给用户随意填写会带来审核与法律风险。
@@ -911,7 +940,7 @@ function settingsView() {
 
       <div class="field">
         <label class="check">
-          <input type="checkbox" id="f-autoSubmit" ${s.autoSubmit ? "checked" : ""} />
+          <input type="checkbox" id="f-autoSubmit" ${s.autoSubmit !== false ? "checked" : ""} />
           测完自动提交
         </label>
         <p class="field-hint">关掉的话，成绩只留在本机，需要手动点提交才上榜。</p>
@@ -929,7 +958,7 @@ function settingsView() {
       <div class="card-head"><h2>测试</h2><span class="sub">磁盘测试文件写在哪个卷上</span></div>
       <div class="field">
         <label>测试目录</label>
-        <input type="text" id="f-targetDir" list="volumes" value="${esc(s.targetDir || "")}" autocomplete="off" />
+        <input type="text" id="f-targetDir" list="volumes" value="${esc(s.targetDir || "")}" />
         <datalist id="volumes">
           ${
             // 当前值不在下拉选项里时（用户自己填了子目录），也要作为一项列出来，
@@ -962,7 +991,7 @@ function settingsView() {
       <div class="divider"></div>
       <div class="row" style="gap:10px;flex-wrap:wrap;align-items:center">
         <button class="btn" data-action="open-feedback">反馈问题 / 发送日志</button>
-        <span class="faint" style="font-size:12px">发现算错、卡住、看不懂 —— 点这里，带上环境与日志。</span>
+        <span class="faint" style="font-size:12px">发现算错、卡住、看不懂 —— 点这里，带上环境与日志，我才能改得动。</span>
       </div>
     </div>
   </div>`;
@@ -1166,7 +1195,8 @@ async function loadBoard({ force = false } = {}) {
 }
 
 async function saveSettings() {
-  // 榜单地址与令牌不再由用户填（地址随包写死）；花名也不再可改（用本机设备名）
+  // 榜单地址与令牌不再由用户填：地址随包写死，令牌走内置公共榜不需要
+  // 花名不再可改（固定用设备名），榜单地址随包写死
   const patch = {
     autoSubmit: Boolean($("#f-autoSubmit")?.checked),
   };

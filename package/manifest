@@ -1,5 +1,5 @@
 appname=niudao
-version=2.6.0
+version=2.6.1
 display_name=牛刀 fnOS Benchmark
 desc=牛刀 · fnOS Benchmark：给飞牛 NAS 做一次硬件体检，CPU、内存、磁盘十项实测，出综合分与维度分，生成一份能贴到论坛的报告，并和别人的机器排进同一个天梯。
 source=thirdparty
@@ -12,4 +12,4 @@ desktop_applaunchname=niudao.main
 install_dep_apps=nodejs_v22:python312
 ctl_stop=true
 checkport=false
-changelog=2.6.0：套件版本升到 1.1.0（封顶规则变更，新旧分数不再混榜）；取消重复提交的时间窗与涨幅限制，更好的成绩随时能上榜；榜单显示名固定用设备名，不再支持自定义；测试目录支持任意路径；修复升级后浏览器仍加载旧前端的问题。
+changelog=2.6.1：修复 2.6.0 的严重回归（天梯页显示成设置页、成绩单报 historyView is not defined）；新增前端结构完整性测试。历史：套件版本升到 1.1.0（封顶规则变更，新旧分数不再混榜）；取消重复提交的时间窗与涨幅限制，更好的成绩随时能上榜；榜单显示名固定用设备名，不再支持自定义；测试目录支持任意路径；修复升级后浏览器仍加载旧前端的问题。
