@@ -1,13 +1,13 @@
 appname=niudao
-version=2.9.1
+version=2.9.2
 display_name=牛刀 fnOS Benchmark
 desc=完全免费，无广告、无账号、无内购。给飞牛 NAS 打分的性能测试 —— 四十秒，十项实测，一个分数。<br><br><b>测什么</b>：CPU 单核与多核、加密传输、压缩、内存带宽与延迟、磁盘顺序与随机读写，全是 NAS 上真会用到的活。<br><b>得到什么</b>：综合分与 CPU／内存／存储三个维度分，一张能直接晒的成绩卡，一份带原始指标的详细报告。<br><b>和谁比</b>：天梯榜物理机与虚拟机分开排名，可按架构、按同型号对比，一台机器只留最好成绩。<br><b>还能做什么</b>：3–20 分钟持续满载，看烤机后性能掉多少、散热吃不吃得消，结论分四档直说。<br><b>隐私</b>：零注册，不读你的文件、不上传文件名与路径，只传机型与实测数值。<br><br>验证新机值不值、升级前后差多少，或只想看自己排第几 —— 装上，点一下，四十秒见分晓。
 
 source=thirdparty
 platform=all
-maintainer=fun
+maintainer=Fun
 maintainer_url=https://mp.weixin.qq.com/mp/appmsgalbum?__biz=MzkyOTcwMzE0MQ==&action=getalbum&album_id=4707355291124957184
-distributor=fun
+distributor=Fun
 distributor_url=https://mp.weixin.qq.com/mp/appmsgalbum?__biz=MzkyOTcwMzE0MQ==&action=getalbum&album_id=4707355291124957184
 os_min_version=1.1.3100
 desktop_uidir=ui
@@ -15,4 +15,4 @@ desktop_applaunchname=niudao.main
 install_dep_apps=nodejs_v22:python312
 ctl_stop=true
 checkport=false
-changelog=2.9.1：上架合规调整 —— 应用介绍首行声明完全免费；安装脚本清理已废弃的向导变量。
+changelog=2.9.2：开发者与发布者署名统一为 Fun。
