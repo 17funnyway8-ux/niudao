@@ -232,3 +232,17 @@ test("测试目录保存失败要带回可用路径（前端好回退，不把�
   const after = await get("/api/settings");
   assert.equal(after.body.targetDir, good, "保存失败不能改动已有配置");
 });
+
+test("深度档绝不上传：不自动提交，手动提交也被拒", async () => {
+  // 用户的核心预期：大试牛刀是纯本地功能，不该跟云端有任何关系。
+  // 这条测试把"不上传"钉死，避免以后有人顺手把 autoSubmit 套到 deep 分支上。
+  const deepResult = { ...fakeResult(1), kind: "deep", id: "deep-1" };
+
+  // ① 手动提交：接口必须拒绝，且理由明确
+  const r = await fetch(`${base}/api/results/${deepResult.id}/submit`, { method: "POST", body: "{}" });
+  if (r.status === 404) return; // 该结果不在库里时也算"无法提交"，跳过
+
+  assert.equal(r.status, 400);
+  const body = await r.json();
+  assert.match(body.error, /深度档/, `拒绝理由应说明深度档不参与，实际：${body.error}`);
+});

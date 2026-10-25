@@ -459,7 +459,7 @@ function homeView() {
   const deepCard = `<div class="card deep-card">
       <div class="card-head">
         <h2>持续负载（深度档）</h2>
-        <span class="sub">满载运行，测逐轮稳定性与温度</span>
+        <span class="sub">纯本地运行，结果只存本机、不上榜</span>
         <span class="spacer"></span>
         ${lastDeep ? verdictPill(lastDeep.verdictLevel, lastDeep.verdict) : ""}
       </div>
