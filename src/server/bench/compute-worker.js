@@ -9,9 +9,8 @@
  * 不需要重算 baselines、也不需要升套件版本。
  */
 import { parentPort, workerData } from "node:worker_threads";
-import os from "node:os";
 import { aesThroughput, zlibThroughput } from "./crypto.js";
-import { memBandwidth, memLatencySweep, pickBufferMb } from "./memory.js";
+import { memBandwidth, memLatency } from "./memory.js";
 
 const { job } = workerData;
 
@@ -19,10 +18,7 @@ let result;
 if (job === "crypto") {
   result = { aes: aesThroughput(), zlib: zlibThroughput() };
 } else if (job === "memory") {
-  // 缓冲区按机器内存动态定档：4GB 的小主站开 512MB 缓冲会挤到 swap，
-  // 测出的低分反映的是"被测试压垮"，不是硬件水平。
-  const totalGb = Math.round(os.totalmem() / 1024 ** 3);
-  result = { bw: memBandwidth({ bufferMb: pickBufferMb(totalGb) }), lat: memLatencySweep() };
+  result = { bw: memBandwidth(), lat: memLatency() };
 } else {
   throw new Error(`未知的基准任务: ${job}`);
 }
