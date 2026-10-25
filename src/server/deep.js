@@ -135,7 +135,7 @@ export async function runDeep({
   while (!shouldStop() && (Date.now() - burnStart) / 1000 < duration) {
     await sleep(500);
     const elapsed = (Date.now() - burnStart) / 1000;
-    if (elapsed - lastTick >= 5) {
+    if (elapsed - lastTick >= 1) {
       lastTick = elapsed;
       const last = series[series.length - 1] || {};
       const lastRound = roundsSeries[roundsSeries.length - 1];

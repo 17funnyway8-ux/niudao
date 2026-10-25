@@ -329,7 +329,7 @@ async function startDeep(body = {}) {
     error: null,
     events: [],
     live: null,
-    progress: { durationSec, burnedSec: 0, remainingSec: durationSec },
+    progress: { durationSec, burnedSec: 0, remainingSec: durationSec, phase: "baseline" },
     resultId: null,
     cancelRequested: false,
   });
@@ -349,7 +349,7 @@ async function startDeep(body = {}) {
           if (ev.type === "phase") state.events.push({ at: Date.now(), ...ev });
           if (ev.type === "tick") {
             state.live = ev.sample;
-            state.progress = { durationSec, burnedSec: ev.burnedSec, remainingSec: ev.remainingSec };
+            state.progress = { durationSec, burnedSec: ev.burnedSec, remainingSec: ev.remainingSec, phase: "burn" };
           }
           if (ev.type === "sample") state.live = { ...ev.sample };
           if (state.events.length > 80) state.events.shift();

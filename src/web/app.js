@@ -49,7 +49,7 @@ const state = {
   run: null,
   poll: null,
   board: { dim: "overall", arch: "", cpuOnly: false, track: "physical", data: null, loading: false, error: null },
-  deep: { durationSec: 300, loadDisk: false, liveSeries: [] },
+  deep: { durationSec: 300, loadDisk: false, liveSeries: [], clockAt: 0 },
   fast: { liveSeries: [] },
 };
 
@@ -314,13 +314,20 @@ function homeView() {
  const heroCard = deepRunning
     ? (() => {
         const p = run.progress || {};
-        const burned = p.burnedSec || 0;
         const dur = p.durationSec || state.deep.durationSec || 600;
+        // 本地跑秒表：只把服务端的 burnedSec 当基准点，之后用本地时间递推。
+        // 服务端 tick 与前端轮询都对不齐的话，秒表会一顿一顿地跳（甚至卡好几秒），
+        // 而"正在烤机"这件事最需要的就是"它在动"的确定感。
+        const baseBurn = p.burnedSec || 0;
+        const drift = state.deep.clockAt ? (Date.now() - state.deep.clockAt) / 1000 : 0;
+        const burned = Math.min(dur, baseBurn + (p.phase === "burn" ? drift : 0));
         const pctDone = Math.min(100, (burned / Math.max(1, dur)) * 100);
         const live = run.live || {};
+        // 烤机前的冷态基线复测要十几秒，这段时间秒表本来就该是 0 —— 但得说清在干什么
+        const warming = p.phase !== "burn" && baseBurn === 0;
         const tempPoints = state.deep.liveSeries.map((s) => ({ t: s.t, value: s.cpuC }));
         return `<div class="card">
-          <div class="card-head"><h2>正在烤机</h2><span class="sub">满载中，页面可以放着不管</span><span class="spacer"></span>
+          <div class="card-head"><h2>${warming ? "准备中" : "正在烤机"}</h2><span class="sub">${warming ? "先测一次冷态基线，马上开始满载" : "满载中，页面可以放着不管"}</span><span class="spacer"></span>
             <button class="btn sm ghost" data-action="cancel-run">中止</button>
           </div>
           <div class="row" style="align-items:baseline;gap:10px">
@@ -1191,6 +1198,14 @@ function pollRun() {
   state.poll = setInterval(async () => {
     try {
       const run = await api("/api/run");
+      // 深度档：记录服务端进度的"锚点时间"，本地秒表从这里往前推
+      if (run?.progress && typeof run.progress.burnedSec === "number") {
+        const prev = state.deep.burnSeen;
+        if (prev !== run.progress.burnedSec) {
+          state.deep.clockAt = Date.now();
+          state.deep.burnSeen = run.progress.burnedSec;
+        }
+      }
       // 深度档：把实时采样攒成曲线
       if (run.kind === "deep" && run.status === "running" && run.live && typeof run.live.cpuC === "number") {
         const last = state.deep.liveSeries.at(-1);
@@ -1204,6 +1219,8 @@ function pollRun() {
       state.run = run;
       render();
       if (run.status !== "running") {
+        state.deep.clockAt = 0;
+        state.deep.burnSeen = null;
         stopPolling();
         await refreshBoot();
         if ((run.status === "done" || run.status === "cancelled") && run.resultId) {
