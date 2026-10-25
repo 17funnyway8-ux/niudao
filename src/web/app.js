@@ -112,7 +112,7 @@ function howMeasured(r, key) {
   const d = r.detail || {};
   const threads = d.cpu_multi?.threads || r.hardware?.threads || "?";
   const map = {
-    cpu_single: `2 轮 × ${Math.round((r.durations?.cpu_single || 10000) / 2000)}s${clockHint(r)}`,
+    cpu_single: `2 轮 × ${Math.round((r.durations?.cpu_single || 10000) / 2000)}s${coreHint(r)}${clockHint(r)}`,
     cpu_multi: `${threads} 线程 × ${Math.round((r.durations?.cpu_multi || 5000) / 1000)}s${clockHint(r)}`,
     crypto_aes: `GCM ${d.crypto?.totalMb || "—"}MB / ${d.crypto?.chunkMb || "—"}MB 块`,
     zlib: `deflate L${d.crypto?.level || 6} ${d.crypto?.sizeMb || "—"}MB（压缩率 ${d.crypto?.ratio ?? "—"}）`,
@@ -130,6 +130,26 @@ function howMeasured(r, key) {
  * 测试期间 CPU 的工作频率。同型号 CPU 开不开睿频、功耗墙设多少，
  * 结果能差 30% 以上 —— 不写这个，看榜的人只会以为"同一颗 U 有人虚标"。
  */
+/** 卷的一行说明：/vol1 · btrfs · 1788GB（可用 1079GB）· SSD 型号 */
+function volLabel(v) {
+  const size = v.size_gb ? `${v.size_gb}GB` : "";
+  const free = Number.isFinite(v.free_gb) ? `（可用 ${v.free_gb}GB）` : "";
+  const parts = [v.fstype, size + free, v.kind, v.disks > 1 ? `${v.disks} 块盘` : ""];
+  return parts.filter(Boolean).join(" · ");
+}
+
+/**
+ * 单核跑在哪个核上。混合架构（Intel P/E 核）上这不是细节：
+ * 落到 E 核分数会腰斩，看不出这件事就会误判"这台机器很慢"。
+ */
+function coreHint(r) {
+  const d = r?.detail?.cpu_single;
+  if (!d) return "";
+  if (Number.isFinite(d.pinnedCpu)) return ` · 钉在 P 核 #${d.pinnedCpu}`;
+  if (Number.isFinite(d.spreadPct) && d.spreadPct > 12) return ` · 两轮波动 ${d.spreadPct}%`;
+  return "";
+}
+
 function clockHint(r) {
   const c = r?.detail?.cpuClock;
   if (!c || !c.available) return "";
@@ -301,7 +321,12 @@ function homeView() {
         <dt>内存</dt><dd>${hw.mem_gb || "—"} GB${hw.mem_gib ? ` <span class="faint">（系统可见 ${hw.mem_gib} GiB）</span>` : ""}</dd>
         <dt>显卡</dt><dd>${esc(hw.gpu || "未识别")}</dd>
         <dt>系统</dt><dd>fnOS ${esc(hw.os_version || "—")}</dd>
-        <dt>测试卷</dt><dd class="mono truncate">${esc(hw.volume || boot?.settings?.targetDir || "—")}</dd>
+        <dt>测试卷</dt><dd class="mono truncate">${esc(hw.volume || boot?.settings?.targetDir || "—")}${
+          (() => {
+            const v = (boot?.hardware?.volumes || []).find((x) => x.mount && String(hw.volume || "").startsWith(x.mount));
+            return v ? ` <span class="faint">· ${esc(volLabel(v))}</span>` : "";
+          })()
+        }</dd>
       </dl>
       <div class="divider"></div>
       <div class="section-title">温度快照</div>
@@ -849,10 +874,9 @@ function settingsView() {
         <label>测试目录</label>
         <input type="text" id="f-targetDir" list="volumes" value="${esc(s.targetDir || "")}" />
         <datalist id="volumes">
-          ${(state.boot?.hardware?.hardware?.disks || [])
-            .map((d) => String(d).split(" ")[0])
-            .filter(Boolean)
-            .map((m) => `<option value="${esc(m)}"></option>`)
+          ${(state.boot?.hardware?.volumes || [])
+            .filter((v) => v?.mount)
+            .map((v) => `<option value="${esc(v.mount)}" label="${esc(volLabel(v))}"></option>`)
             .join("")}
         </datalist>
         <span class="hint">默认是应用数据目录所在卷。想测别的盘，填一个有写权限的路径（下拉里是识别到的卷）。</span>

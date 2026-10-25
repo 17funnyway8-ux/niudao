@@ -81,6 +81,15 @@ export async function runSuite({ targetDir, onEvent = () => {}, opts = {} }) {
   if (single) {
     metrics.cpu_single = Math.round(single.mops * 10) / 10;
     detail.cpu_single = single.detail;
+    // 两轮差得多，说明这个数字不稳（大小核调度、后台负载、降频都可能导致）
+    if (Number.isFinite(single.detail?.spreadPct) && single.detail.spreadPct > 12) {
+      caveats.push(
+        `单核两轮波动 ${single.detail.spreadPct}%（${(single.detail.allMops || []).join(" / ")} MOps/s），可能被调度到能效核或有其他任务干扰，分数偏保守。`,
+      );
+    }
+    if (single.detail?.topology?.hybrid) {
+      caveats.push(`检测到混合架构（${single.detail.topology.pCores.length} 性能核 + ${single.detail.topology.eCores.length} 能效核），单核测试已钉在 P 核上。`);
+    }
   }
 
   const multi = await step(1, () => cpuMulti(cfg.cpuMultiMs, { onProgress: (p) => live({ cpuMulti: p }) }));

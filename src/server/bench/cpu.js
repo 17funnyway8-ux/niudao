@@ -8,14 +8,68 @@ import os from "node:os";
 import { Worker } from "node:worker_threads";
 import { fileURLToPath } from "node:url";
 import { OPS_PER_ITER } from "./kernel.js";
+import { detectHybrid, describeTopology, pickPCore, runPinnedKernel } from "./affinity.js";
 
 const WORKER = fileURLToPath(new URL("./worker.js", import.meta.url));
 
-/** 单核：跑两轮取好的一轮，抵消偶发调度抖动（全部在 worker 里完成） */
+/**
+ * 单核：跑三轮取最好的一轮，抵消偶发调度抖动。
+ *
+ * 大小核机器上额外做两件事（见 affinity.js）：
+ *  - 把测试钉在 P 核上（不钉的话可能落到 E 核，分数直接腰斩）
+ *  - 把"钉在哪个核、是 P 还是 E、两轮离散度"写进 detail，让分数可复现
+ */
 export async function cpuSingle(durationMs = 6000) {
-  const r = await runWorker(durationMs, { rounds: 2, warmupMs: 350 });
+  const ROUNDS = 2;
+  const topology = detectHybrid();
+  const pin = pickPCore(topology);
+
+  // 混合架构 + 有 taskset：钉在 P 核上跑
+  if (pin !== null) {
+    const results = [];
+    for (let i = 0; i < ROUNDS; i += 1) {
+      try {
+        results.push(await runPinnedKernel(durationMs, pin));
+      } catch {
+        /* 绑核失败就退回 worker，不能让整项挂掉 */
+        results.length = 0;
+        break;
+      }
+    }
+    if (results.length) {
+      const mops = results.map((r) => (r.iters * OPS_PER_ITER) / 1e6 / (r.elapsed / 1000));
+      const best = Math.max(...mops);
+      const spread = best > 0 ? ((best - Math.min(...mops)) / best) * 100 : 0;
+      return {
+        mops: best,
+        detail: {
+          rounds: results.length,
+          opsPerIter: OPS_PER_ITER,
+          inWorker: false,
+          pinnedCpu: pin,
+          coreType: "P",
+          topology: describeTopology(topology),
+          allMops: mops.map((m) => Math.round(m * 10) / 10),
+          spreadPct: Math.round(spread * 10) / 10,
+        },
+      };
+    }
+  }
+
+  // 非混合架构（或绑核不可用）：保持原样，worker 里跑
+  const r = await runWorker(durationMs, { rounds: ROUNDS, warmupMs: 350 });
   const mops = (r.iters * OPS_PER_ITER) / 1e6 / (r.elapsed / 1000);
-  return { mops, detail: { rounds: 2, opsPerIter: OPS_PER_ITER, inWorker: true, iters: r.allIters } };
+  const all = (r.allIters || []).slice();
+  return {
+    mops,
+    detail: {
+      rounds: ROUNDS,
+      opsPerIter: OPS_PER_ITER,
+      inWorker: true,
+      iters: r.allIters,
+      topology: describeTopology(topology),
+    },
+  };
 }
 
 function runWorker(durationMs, extra = {}) {

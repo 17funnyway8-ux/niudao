@@ -302,13 +302,73 @@ function mounts() {
   return out;
 }
 
-function diskKind(dev) {
-  const name = path.basename(dev || "");
-  if (!name) return "";
-  const rot = read(`/sys/block/${name}/queue/rotational`);
-  const model = read(`/sys/block/${name}/device/model`);
-  if (rot === null) return model ? model.trim() : "";
-  return `${rot === "1" ? "HDD" : "SSD"}${model ? ` ${model.trim()}` : ""}`;
+/**
+ * 把 /proc/mounts 里的设备名一路追到底层物理盘。
+ *
+ * fnOS 的卷层次比想象的深：/dev/mapper/trim_<uuid>-0 → dm-N → mdN(软 RAID) → sda/sdb/nvme0n1。
+ * 原来只取 basename 去查 /sys/block/<name>/queue/rotational，分区和 dm 都查不到，
+ * 于是界面上永远看不出是固态还是机械。这里顺着 slaves 递归到底。
+ */
+function blockSysName(dev) {
+  const base = path.basename(String(dev || ""));
+  if (!base) return "";
+  // /dev/mapper/xxx 的 base 是 dm 别名，/sys/class/block/<别名> 不存在，
+  // 要反查 /sys/block/dm-*/dm/name 找到真正的 dm-N
+  if (!fs.existsSync(`/sys/class/block/${base}`)) {
+    try {
+      for (const d of fs.readdirSync("/sys/block")) {
+        if (!d.startsWith("dm-")) continue;
+        if (read(`/sys/block/${d}/dm/name`) === base) return d;
+      }
+    } catch {
+      /* ignore */
+    }
+    return base;
+  }
+  return base;
+}
+
+/** 分区 → 整盘：sda1→sda、nvme0n1p2→nvme0n1、mmcblk0p1→mmcblk0 */
+function wholeDiskOf(name) {
+  const m = String(name || "").match(/^(nvme\d+n\d+|mmcblk\d+|sd[a-z]+|vd[a-z]+|hd[a-z]+)(p?\d+)?$/i);
+  return m ? m[1] : name;
+}
+
+/**
+ * 递归收集底层物理盘。
+ * 判断顺序很重要：**先看有没有 slaves**（dm / md 这类虚拟设备都有 slaves，
+ * 而且 md 自己也带 queue/rotational，先读它就会把 RAID 阵列当成一块"没有型号的盘"），
+ * 只有到底了（没有 slaves）才认为它是物理盘。
+ */
+function physicalDisks(dev, depth = 0) {
+  const name = blockSysName(dev);
+  if (!name || depth > 5) return [];
+  let slaves = [];
+  try {
+    slaves = fs.readdirSync(`/sys/block/${name}/slaves`);
+  } catch {
+    slaves = [];
+  }
+  if (slaves.length) {
+    const out = [];
+    for (const sl of slaves) out.push(...physicalDisks(sl, depth + 1));
+    return out;
+  }
+  const whole = wholeDiskOf(name);
+  const rot = read(`/sys/block/${whole}/queue/rotational`);
+  if (rot === null) return [];
+  return [{ name: whole, rotational: rot === "1", model: (read(`/sys/block/${whole}/device/model`) || "").trim() }];
+}
+
+/** 卷的介质类型：底层盘里有任一机械盘就算 HDD（其余按 SSD） */
+function volumeKind(dev) {
+  const disks = physicalDisks(dev);
+  if (!disks.length) return "";
+  const hdd = disks.filter((d) => d.rotational);
+  const kind = hdd.length ? (hdd.length === disks.length ? "HDD" : "SSD+HDD") : "SSD";
+  const models = [...new Set(disks.map((d) => d.model).filter(Boolean))];
+  const label = models.length === 1 ? models[0] : models.length ? `${models.length} 种盘` : "";
+  return [kind, disks.length > 1 ? `${disks.length} 块` : "", label].filter(Boolean).join(" ");
 }
 
 function volumes() {
@@ -316,14 +376,24 @@ function volumes() {
   for (const m of mounts()) {
     if (seen.has(m.mount)) continue;
     let sizeGb = 0;
+    let freeGb = null;
     try {
       const st = fs.statfsSync(m.mount);
       sizeGb = Math.round((st.blocks * st.bsize) / 1024 ** 3);
+      freeGb = Math.round((st.bavail * st.bsize) / 1024 ** 3);
     } catch {
-      /* 无权限就算了 */
+      /* 权限不足就留空 */
     }
-    // /vol1 这类挂载点背后的块设备名通常无法直接拿到，尽量从 mounts 的 dev 推断
-    seen.set(m.mount, { mount: m.mount, fstype: m.fstype, size_gb: sizeGb, kind: diskKind(m.dev) });
+    const device = blockSysName(m.dev);
+    seen.set(m.mount, {
+      mount: m.mount,
+      fstype: m.fstype,
+      size_gb: sizeGb,
+      free_gb: freeGb,
+      device,
+      disks: physicalDisks(m.dev).length,
+      kind: volumeKind(m.dev),
+    });
   }
   return [...seen.values()];
 }
