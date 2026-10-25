@@ -134,7 +134,8 @@ function howMeasured(r, key) {
 function volLabel(v) {
   const size = v.size_gb ? `${v.size_gb}GB` : "";
   const free = Number.isFinite(v.free_gb) ? `（可用 ${v.free_gb}GB）` : "";
-  const parts = [v.fstype, size + free, v.kind, v.disks > 1 ? `${v.disks} 块盘` : ""];
+  const auth = v.authorized ? (v.writable ? "已授权·可写" : "已授权·只读") : "";
+  const parts = [auth, v.fstype, size + free, v.kind, v.disks > 1 ? `${v.disks} 块盘` : ""];
   return parts.filter(Boolean).join(" · ");
 }
 
@@ -340,10 +341,21 @@ function homeView() {
         <dt>内存</dt><dd>${hw.mem_gb || "—"} GB${hw.mem_gib ? ` <span class="faint">（系统可见 ${hw.mem_gib} GiB）</span>` : ""}</dd>
         <dt>显卡</dt><dd>${esc(hw.gpu || "未识别")}</dd>
         <dt>系统</dt><dd>fnOS ${esc(hw.os_version || "—")}</dd>
-        <dt>测试卷</dt><dd class="mono truncate">${esc(hw.volume || boot?.settings?.targetDir || "—")}${
+        <dt>测试卷</dt><dd class="vol-cell">${
+          // 路径要完整可见：用户常常在几个卷之间切着测，路径被截断就没法核对是哪块盘
           (() => {
-            const v = (boot?.hardware?.volumes || []).find((x) => x.mount && String(hw.volume || "").startsWith(x.mount));
-            return v ? ` <span class="faint">· ${esc(volLabel(v))}</span>` : "";
+            const path = String(hw.volume || boot?.settings?.targetDir || "—");
+            // 找最匹配的卷：优先完全一致，其次是最长的父路径
+            const vols = (boot?.hardware?.volumes || []).filter((x) => x?.mount);
+            const v =
+              vols.find((x) => x.mount === path) ||
+              vols
+                .filter((x) => path.startsWith(`${x.mount}/`))
+                .sort((a, b) => b.mount.length - a.mount.length)[0];
+            const detail = v
+              ? `<span class="vol-meta">${esc(v.authorized ? (v.writable ? "已授权·可写" : "已授权·只读") : "")}${v.authorized ? " · " : ""}${esc([v.fstype, v.size_gb ? `${v.size_gb}GB` : "", v.kind].filter(Boolean).join(" · "))}</span>`
+              : "";
+            return `<span class="mono vol-path">${esc(path)}</span>${detail}`;
           })()
         }</dd>
       </dl>
@@ -968,7 +980,14 @@ function settingsView() {
               const vols = (state.boot?.hardware?.volumes || []).filter((v) => v?.mount);
               const has = vols.some((v) => v.mount === cur);
               const mine = cur && !has ? `<option value="${esc(cur)}" label="当前：自定义路径"></option>` : "";
-              return mine + vols.map((v) => `<option value="${esc(v.mount)}" label="${esc(volLabel(v))}"></option>`).join("");
+              // 已授权的目录排前面：那才是用户真正想测的盘
+              const sorted = [...vols].sort((a, b) => Number(Boolean(b.authorized)) - Number(Boolean(a.authorized)));
+              return (
+                mine +
+                sorted
+                  .map((v) => `<option value="${esc(v.mount)}" label="${esc(volLabel(v))}"></option>`)
+                  .join("")
+              );
             })()
           }
         </datalist>

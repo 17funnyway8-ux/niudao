@@ -113,3 +113,20 @@ test("无 DMI 且系统不是 fnOS → 判为容器/沙箱（真实案例：inst
   // 本机有 DMI（Default string DS2501），必须是物理机，不能被这条规则误伤
   assert.equal(env.type, "physical");
 });
+
+test("授权路径会出现在卷列表里（用户在飞牛『访问权限』里加的目录）", async () => {
+  // 用户场景：在应用设置里把 /vol4/xxx/niudao benchmark 授权给应用，
+  // 但设置页下拉只列了卷根 /vol1..4，他看不到自己刚授权的目录。
+  const old = process.env.TRIM_DATA_ACCESSIBLE_PATHS;
+  process.env.TRIM_DATA_ACCESSIBLE_PATHS = "/vol4:/vol1";
+  try {
+    const m = await import(`../src/server/hardware.js?env=${Date.now()}`); // 绕过 env 缓存
+    const vols = m.snapshot({}).volumes || [];
+    const authed = vols.filter((v) => v.authorized);
+    assert.ok(authed.length >= 1, "TRIM_DATA_ACCESSIBLE_PATHS 里的目录必须出现在卷列表");
+    assert.ok(authed.every((v) => typeof v.writable === "boolean"), "要标出是否可写");
+  } finally {
+    if (old === undefined) delete process.env.TRIM_DATA_ACCESSIBLE_PATHS;
+    else process.env.TRIM_DATA_ACCESSIBLE_PATHS = old;
+  }
+});

@@ -371,8 +371,64 @@ function volumeKind(dev) {
   return [kind, disks.length > 1 ? `${disks.length} 块` : "", label].filter(Boolean).join(" ");
 }
 
+/**
+ * 用户在飞牛「应用设置 → 访问权限」里授权的路径。
+ * 这些是**用户显式允许应用读写**的目录（可能在某个卷的子目录里），
+ * 比卷根更贴近他真正想测的盘，所以优先列出来。
+ * 变量格式：TRIM_DATA_ACCESSIBLE_PATHS，`:` 分隔（技能文档确认的约定）。
+ */
+function authorizedPaths() {
+  const raw = process.env.TRIM_DATA_ACCESSIBLE_PATHS || process.env.TRIM_DATA_SHARE_PATHS || "";
+  const out = [];
+  for (const p of raw.split(":")) {
+    const dir = p.trim();
+    if (!dir.startsWith("/")) continue;
+    // 只要目录还在就列出来。**不能要求可写**：卷根本身通常 root 拥有、应用只读，
+    // 但用户仍可能想看它；真正能不能写，在保存设置时用写探针校验。
+    try {
+      if (!fs.statSync(dir).isDirectory()) continue;
+    } catch {
+      continue; // 授权了但目录已被删
+    }
+    if (!out.includes(dir)) out.push(dir);
+  }
+  return out;
+}
+
 function volumes() {
   const seen = new Map();
+  // ① 用户显式授权的目录优先（可能是某个卷下的子目录）
+  for (const dir of authorizedPaths()) {
+    const mount = (mounts().find((m) => dir === m.mount || dir.startsWith(`${m.mount}/`)) || {}).mount || "";
+    let sizeGb = 0;
+    let freeGb = null;
+    try {
+      const st = fs.statfsSync(dir);
+      sizeGb = Math.round((st.blocks * st.bsize) / 1024 ** 3);
+      freeGb = Math.round((st.bavail * st.bsize) / 1024 ** 3);
+    } catch {
+      /* 权限不足就留空 */
+    }
+    seen.set(dir, {
+      mount: dir,
+      fstype: mount ? (mounts().find((m) => m.mount === mount)?.fstype || "") : "",
+      size_gb: sizeGb,
+      free_gb: freeGb,
+      device: "",
+      disks: 0,
+      kind: mount ? volumeKind(mounts().find((m) => m.mount === mount)?.dev || "") : "",
+      authorized: true,
+      writable: (() => {
+        try {
+          fs.accessSync(dir, fs.constants.W_OK);
+          return true;
+        } catch {
+          return false;
+        }
+      })(),
+    });
+  }
+  // ② 再补上各卷的根目录
   for (const m of mounts()) {
     if (seen.has(m.mount)) continue;
     let sizeGb = 0;

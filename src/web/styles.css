@@ -787,3 +787,10 @@ input[type="checkbox"] { width: 14px; height: 14px; accent-color: var(--accent);
   font-family: var(--mono);
   font-size: 13px;
 }
+
+/* 测试卷：路径与容量/介质分两行显示。
+   原来用 truncate 单行省略，长路径会被截成 "/vol1/@appdata/niudao · btrfs · 1788GB（可…"，
+   用户没法核对到底测的是哪块盘。 */
+.vol-cell { display: flex; flex-direction: column; gap: 2px; align-items: flex-start; }
+.vol-path { word-break: break-all; font-size: 12.5px; }
+.vol-meta { font-size: 11.5px; color: var(--muted); }
