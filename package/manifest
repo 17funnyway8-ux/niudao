@@ -15,4 +15,4 @@ desktop_applaunchname=niudao.main
 install_dep_apps=nodejs_v22:python312
 ctl_stop=true
 checkport=false
-changelog=2.9.3：内存带宽与延迟测量重做（对照 AIDA64 / Arm ASCT 方法）—— 完整预热消除缺页污染、多次取中位数替代取最好、缓冲按机器内存动态定档、延迟改为随工作集扫描并标注页表开销。套件升 1.2.0，旧成绩不混榜。
+changelog=2.9.3：内存带宽测试修掉首测缺页污染（此前偶发首次测量只有 1 GB/s），改为预热一次完整 memcpy 后再计时、多次取中位数；缓冲区按机器内存定档，保护 4GB 小主机不被 512MB 测试数组压垮；报告新增延迟随工作集变化的曲线。测量口径未变，套件仍为 1.1.0。

@@ -50,9 +50,19 @@ export function memBandwidth({ bufferMb = 256, rounds = 9 } = {}) {
   const src = new Uint8Array(bytes);
   const dst = new Uint8Array(bytes);
 
-  // 完整预热：把每一页都真正落盘到物理内存，并走一遍 memcpy 路径把 TLB 填热
-  src.fill(1);
-  dst.fill(0);
+  // 预热：走**一次完整的 memcpy**（不计时），把缺页与 TLB 填热。
+  //
+  // ⚠️ 这里踩过一个坑：最早我改成 src.fill(1) + dst.fill(0) 全页预处理，
+  // 结果带宽从 17 掉到 8.8 —— 因为本机透明大页是 [always]，大量 memset 会让
+  // 内核拆分 2MB 大页、退化成 4KB 页，TLB 覆盖变差，测出来的低值是"被测试方法
+  // 自己搞坏的"，不是内存的问题。实测对照：
+  //   只碰首尾、含首测      → 首测 1.12（缺页），稳态 16.8
+  //   fill 全页预热         → 稳定 8.8（大页被拆）
+  //   预热一次 memcpy       → 稳定 17.07 ✅ 既没有缺页污染，也没破坏大页
+  src[0] = 1;
+  src[bytes - 1] = 1;
+  dst[0] = 1;
+  dst[bytes - 1] = 1;
   dst.set(src);
 
   const samples = [];
@@ -141,12 +151,22 @@ export function memLatency({ sizeMb = 64, steps = 2_000_000 } = {}) {
  * 保留它是合理的 —— NAS 的真实小文件随机访问同样要付这个代价，
  * 只是报告里必须说明它"含页表开销"，不能标成裸的内存延迟。
  */
-export function memLatencySweep({ points = [4, 16, 64], steps = 1_200_000 } = {}) {
-  const samples = points.map((sizeMb) => {
+export function memLatencySweep({
+  // 32MB 这一档沿用旧实现的 4M 步（口径必须一致才能跨版本比），
+  // 其余档位只是给报告画曲线用，步数少一点省时间。
+  points = [
+    { sizeMb: 4, steps: 1_200_000 },
+    { sizeMb: 16, steps: 1_200_000 },
+    { sizeMb: 32, steps: 4_000_000 },
+    { sizeMb: 64, steps: 1_200_000 },
+  ],
+} = {}) {
+  const samples = points.map(({ sizeMb, steps }) => {
     const r = memLatency({ sizeMb, steps });
     return { sizeMb, ns: r.ns };
   });
-  // 取最大工作集那一点作为"主存延迟"：它必然越过了所有缓存层级
-  const main = samples[samples.length - 1];
-  return { ns: main.ns, samples, detail: { points, steps } };
+  // 主指标固定取 32MB 那一点：与套件 1.1.0 的口径一致，
+  // 这样新旧客户端的原始值可比，不必因为"换了个采样点"就升套件版本。
+  const main = samples.find((x) => x.sizeMb === 32) || samples[samples.length - 1];
+  return { ns: main.ns, samples, detail: { mainSizeMb: main.sizeMb } };
 }

@@ -7,7 +7,7 @@
  *  3. 归一化基准（baseline）随套件版本一起锁定，跨版本不比较。
  */
 
-export const SUITE_VERSION = "1.2.0";
+export const SUITE_VERSION = "1.1.0";
 export const CLIENT_VERSION = "2.9.3";
 
 /** 原始指标定义：unit 展示用，better 决定除法方向 */
