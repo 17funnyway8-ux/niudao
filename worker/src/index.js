@@ -148,28 +148,26 @@ async function submit(request, env) {
 
   const prev = await previousEntry(env.DB, v.fingerprint, v.suite);
   const scores = computeScores(v.metrics, baselinesFile.metrics);
+  // 名次在赛道内计算：物理机和虚拟机不互相影响
+  const track = v.envType === "physical" ? "physical" : "vm";
 
-  // 防刷分：同一台机器 12 小时内只接受一次写入；除非提升超过 3%。
-  // 没写进去的时候不是报错，而是明确告诉客户端"保留了原成绩"——重跑跑出更差的分数不该弹红字。
-  if (prev) {
-    const elapsedH = (Date.now() - (prev.received_at || prev.ts || 0)) / 3600000;
-    const improvedEnough = scores.composite > prev.composite * 1.03;
-    if (elapsedH < 12 && !improvedEnough) {
-      const ahead = await countOf(env.DB, { suite: v.suite, arch: v.arch, above: prev.composite });
-      return json({
-        ok: true,
-        kept: true,
-        improved: false,
-        composite: scores.composite,
-        previousBest: prev.composite,
-        rank: ahead + 1,
-        retryAfterH: Math.round((12 - elapsedH) * 10) / 10,
-        message:
-          scores.composite <= prev.composite
-            ? `本次 ${scores.composite} 分未超过已有最好成绩 ${prev.composite}，已保留原成绩。`
-            : `距上次提交 ${elapsedH.toFixed(1)} 小时，提升不足 3%，已保留原成绩（${prev.composite}）。`,
-      });
-    }
+  // 只保留最好成绩：从"限制提交频率"改成"只看分数高低"。
+  //
+  // 原先有「12 小时内不许重交 + 提升不足 3% 不收」的限制，初衷是防刷，
+  // 但代价是抹掉了用户真实的进步 —— 有人就喜欢把高了 1 分的成绩晒出来，
+  // 这属于产品的乐趣，不该被规则吃掉。真正需要防的只有"同一台机器占多行"，
+  // 那件事由 UNIQUE(fingerprint, suite) + 下面的 > 判断保证。
+  if (prev && scores.composite <= prev.composite) {
+    const ahead = await countOf(env.DB, { suite: v.suite, arch: v.arch, track, above: prev.composite });
+    return json({
+      ok: true,
+      kept: true,
+      improved: false,
+      composite: scores.composite,
+      previousBest: prev.composite,
+      rank: ahead + 1,
+      message: `本次 ${scores.composite} 分没有超过已有最好成绩 ${prev.composite}，已保留原成绩。`,
+    });
   }
 
   const entry = {

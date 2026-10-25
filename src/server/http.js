@@ -126,9 +126,14 @@ export function splitPrefix(pathname) {
 function sendIndex(res, prefix) {
   fs.readFile(path.join(WEB_DIR, "index.html"), "utf8", (err, html) => {
     if (err) return json(res, 404, { error: "资源不存在" });
-    const out = html.replaceAll("__BASE__", `${prefix}/`);
+    // __V__ 给静态资源加版本查询串：升级后 URL 变了，浏览器一定会重新拉取。
+    // 光靠 cache-control 不够 —— 有的浏览器会一直用内存里的旧 app.js，
+    // 表现成"新版本装上了但界面还是旧的 / 功能报 not defined"。
+    const out = html.replaceAll("__BASE__", `${prefix}/`).replaceAll("__V__", CLIENT_VERSION);
     const buf = Buffer.from(out);
-    res.writeHead(200, { "content-type": MIME[".html"], "content-length": buf.length, "cache-control": "no-cache" });
+    // no-store 而不是 no-cache：升级 FPK 后浏览器若继续用旧 app.js，
+    // 用户会以为新版本没装上（而且报错像"功能缺失"）。文件很小，不值得缓存。
+    res.writeHead(200, { "content-type": MIME[".html"], "content-length": buf.length, "cache-control": "no-store" });
     res.end(buf);
   });
 }
@@ -144,7 +149,7 @@ function serveStatic(res, rest, prefix = "") {
     // 单页应用：未知路径、以及 index.html 本身都走注入了 __BASE__ 的版本
     if (err || full === path.join(WEB_DIR, "index.html")) return sendIndex(res, prefix);
     const ext = path.extname(full).toLowerCase();
-    res.writeHead(200, { "content-type": MIME[ext] || "application/octet-stream", "cache-control": "no-cache" });
+    res.writeHead(200, { "content-type": MIME[ext] || "application/octet-stream", "cache-control": "no-store" });
     res.end(buf);
   });
 }
@@ -739,7 +744,8 @@ async function handleApi(req, res, url) {
     const patch = {};
     // leaderboardUrl 不再开放给用户改：榜单地址随包写死。
     // （自建榜的场景交给服务端常量 + 重新打包，界面不提供入口。）
-    for (const key of ["alias", "autoSubmit", "targetDir"]) {
+    // alias 不再可改：榜单显示名固定用本机设备名（公开榜单不为自定义展示名审核兜底）
+    for (const key of ["autoSubmit", "targetDir"]) {
       if (key in body) patch[key] = body[key];
     }
     if ("diskSizeMb" in body) patch.diskSizeMb = Math.max(64, Math.min(4096, Number(body.diskSizeMb) || 512));
@@ -756,7 +762,9 @@ async function handleApi(req, res, url) {
       try {
         stat0 = fs.statSync(dir);
       } catch {
-        return json(res, 400, { error: `测试目录不存在：${dir}（请先创建，或换成已存在的卷目录）` });
+        return json(res, 400, {
+          error: `测试目录不存在：${dir}。请先在飞牛「文件管理」里新建这个文件夹，或改用一个已存在的目录。`,
+        });
       }
       if (!stat0.isDirectory()) return json(res, 400, { error: `不是目录：${dir}` });
 
@@ -827,8 +835,9 @@ async function handleApi(req, res, url) {
         return json(res, 400, { error: "稳定性成绩不参与性能榜（它测的是持续性能，不是算力）" });
       }
       const body = await readBody(req);
+      const settings = loadSettings(); // 花名固定用设备名，不再从请求体取
       try {
-        const out = await remote.submit(result, body.alias);
+        const out = await remote.submit(result, settings.alias || defaultAlias());
         updateResult(id, { submitted: true, submittedAt: Date.now() });
         boardCache.clear(); // 名次变了，下次看榜必须重新拉
 

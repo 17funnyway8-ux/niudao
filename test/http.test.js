@@ -93,17 +93,22 @@ test("榜单连不上时，天梯接口降级（旧缓存或明确不可用）�
   assert.ok(r.body.stale === true || r.body.unavailable === true, "连不上的降级要如实标注");
 });
 
-test("设置：榜单地址写死，不接受用户覆盖；花名与自动提交可改", async () => {
+test("设置：榜单地址写死、花名不可改（用设备名）、自动提交可调", async () => {
   const before = await get("/api/settings");
   const official = before.body.leaderboardUrl;
+  const originalAlias = before.body.alias;
 
-  const tryOverride = await post("/api/settings", { leaderboardUrl: "http://127.0.0.1:9", alias: "老王" });
-  assert.equal(tryOverride.status, 200);
-  assert.equal(tryOverride.body.alias, "老王", "花名应该能改");
-  assert.equal(tryOverride.body.leaderboardUrl, official, "榜单地址不该被用户改掉");
+  // 花名不再开放：公开榜单上的展示名固定用本机设备名，避免自定义违禁词
+  const res = await post("/api/settings", { leaderboardUrl: "http://127.0.0.1:9", alias: "违禁名字", autoSubmit: false });
+  assert.equal(res.status, 200);
+  assert.equal(res.body.alias, originalAlias, "花名不该被请求体改掉");
+  assert.equal(res.body.leaderboardUrl, official, "榜单地址不该被用户改掉");
+  assert.equal(res.body.autoSubmit, false, "自动提交仍然可调");
 
   const after = await get("/api/settings");
+  assert.equal(after.body.alias, originalAlias);
   assert.equal(after.body.leaderboardUrl, official);
+  await post("/api/settings", { autoSubmit: true }); // 复原，避免影响其它用例
 });
 
 test("测试目录校验：不存在/非绝对路径/特殊文件系统都立即返回 400（不允许卡死事件循环）", async () => {

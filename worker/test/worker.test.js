@@ -110,7 +110,7 @@ test("提交：服务端重算分数，返回名次与样本门槛", async () =>
   assert.equal(r.body.sampleGated, true);
 });
 
-test("同一台机器只保留最好成绩，且 12 小时内不许重复刷", async () => {
+test("同一台机器只保留最好成绩；更好的成绩随时可以顶上（没有时间窗和涨幅门槛）", async () => {
   const env = freshEnv();
   const fp = "bbbb2222bbbb2222";
   await post(env, submission({ fp, mult: 1 }));
@@ -118,11 +118,15 @@ test("同一台机器只保留最好成绩，且 12 小时内不许重复刷", a
   assert.equal(worse.status, 200);
   assert.equal(worse.body.kept, true, "更差的成绩不写库，但也不算错误");
   assert.equal(worse.body.previousBest, 1000);
+
+  // 只高 1% 也应该允许更新：有人就是想晒高 1 分的成绩，不该被"提升不足 3%"吃掉
   const marginal = await jsonBody(await post(env, submission({ fp, mult: 1.01 })));
-  assert.equal(marginal.body.kept, true, "提升不足 3% 同样保留原成绩");
+  assert.equal(marginal.body.kept, undefined, "更高的成绩必须能写进去");
+  assert.ok(marginal.body.composite > 1000);
+
   const board = await jsonBody(await call(env, "/api/v1/leaderboard?dim=overall"));
   assert.equal(board.body.total, 1, "一台机器只占一行");
-  assert.equal(board.body.entries[0].composite, 1000, "保留的是最好那条");
+  assert.ok(board.body.entries[0].composite > 1000, "保留的是最好那条");
 });
 
 test("非法指标 / 版本不一致被拒", async () => {

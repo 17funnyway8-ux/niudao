@@ -776,3 +776,14 @@ input[type="checkbox"] { width: 14px; height: 14px; accent-color: var(--accent);
 .deep-method > summary:hover { color: var(--fg); }
 .deep-method ul { margin: 8px 0 0; padding-left: 16px; line-height: 1.65; }
 .deep-method li + li { margin-top: 4px; }
+
+/* 榜单显示名：只读展示，不做输入框 —— 展示名公开在天梯榜上，不给自定义 */
+.alias-fixed {
+  display: inline-block;
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--surface-2);
+  font-family: var(--mono);
+  font-size: 13px;
+}

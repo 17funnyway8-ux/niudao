@@ -1,5 +1,5 @@
 {
-  "suite": "1.0.0",
+  "suite": "1.1.0",
   "client": "1.0.0",
   "measured_at": "2026-10-22T17:07:25.622Z",
   "machine": {
@@ -21,5 +21,6 @@
     "disk_seq_write": 202,
     "disk_rand_read": 6299,
     "disk_rand_write": 8573
-  }
+  },
+  "notes": null
 }
