@@ -5,6 +5,7 @@
  *   node build.mjs --pack   组装 + fnpack build
  */
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -66,6 +67,45 @@ if (fs.existsSync(checker)) {
   }
 }
 
+
+/**
+ * 版本防重：**一个版本号只能交付一次**。
+ *
+ * 真实事故：2.7.0 交付过之后又改了频率口径/睿频识别/文案，忘了升版本，
+ * 又打出一个也叫 2.7.0 的包 —— 用户装第二遍时飞牛认为是同一版本，
+ * 而且谁也分不清手上那个 2.7.0 是哪一版。
+ *
+ * 判据刻意不用内容 hash：fnpack 的产物里带时间戳，同样的源码两次打包 sha 也不同，
+ * 用 hash 查重会把正常的重复构建全拦下来。改成看"这个版本号有没有交付出去"——
+ * 开发期间随便重建，但只要 outbound 里已经有同名文件，就必须先升版本。
+ */
+const OUTBOUND = path.resolve(ROOT, "..", "..", "outbound");
+
+function checkNotDelivered(version) {
+  const name = `niudao_${version}.fpk`;
+  const hit = path.join(OUTBOUND, name);
+  if (fs.existsSync(hit)) {
+    console.error(`\n[build] 版本号 ${version} 已经交付过：outbound/${name}`);
+    console.error(`        改了东西就必须升版本号，否则用户装第二遍会被当成同一版本。`);
+    console.error(`        请修改 package/manifest 与 package.json 的 version。\n`);
+    process.exit(1);
+  }
+}
+
+function recordVersion(version, file) {
+  const history = path.join(PKG, ".version-history.json");
+  let list = [];
+  try {
+    list = JSON.parse(fs.readFileSync(history, "utf8"));
+  } catch {
+    list = [];
+  }
+  if (!list.some((h) => h.version === version)) {
+    list.push({ version, at: new Date().toISOString(), bytes: fs.statSync(file).size });
+    fs.writeFileSync(history, `${JSON.stringify(list, null, 2)}\n`);
+  }
+}
+
 // 6) 可选打包
 if (process.argv.includes("--pack")) {
   const appname = (() => {
@@ -83,7 +123,10 @@ if (process.argv.includes("--pack")) {
     process.exit(r.status || 1);
   }
   const size = (fs.statSync(fpk).size / 1024).toFixed(0);
-  log(`已生成 ${path.relative(ROOT, fpk)}（${size} KB）`);
+  const version = (fs.readFileSync(path.join(PKG, "manifest"), "utf8").match(/^version\s*=\s*(\S+)/m) || [])[1] || "0.0.0";
+  checkNotDelivered(version);
+  recordVersion(version, fpk);
+  log(`已生成 ${path.relative(ROOT, fpk)}（${size} KB · v${version}）`);
 } else {
   log("完成（加 --pack 生成 .fpk）");
 }
