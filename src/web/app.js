@@ -142,6 +142,14 @@ function volLabel(v) {
  * 单核跑在哪个核上。混合架构（Intel P/E 核）上这不是细节：
  * 落到 E 核分数会腰斩，看不出这件事就会误判"这台机器很慢"。
  */
+/** 触顶项的说明：告诉用户"这个数不是机器强，是测量被缓存放大了" */
+function cappedTitle(r) {
+  const capped = r?.scores?.capped || [];
+  if (!capped.length) return "";
+  const names = capped.map((k) => state.boot?.metrics?.[k]?.label || k);
+  return `${names.join("、")} 超过真实硬件的物理上限（多半是虚拟机/页缓存把数放大了），这几项已按上限计分`;
+}
+
 function coreHint(r) {
   const d = r?.detail?.cpu_single;
   if (!d) return "";
@@ -560,7 +568,8 @@ function resultView() {
         <span class="spacer"></span>
         ${gradeBadge(r.grade?.grade || "D")}
         ${r.submitted ? `<span class="pill good">已提交</span>` : ""}
-        ${r.scores.partial ? `<span class="pill warn">部分项缺失</span>` : ""}
+        ${(r.scores.capped || []).length ? `<span class="pill warn" title="${esc(cappedTitle(r))}">${(r.scores.capped || []).length} 项超物理上限</span>` : ""}
+        ${r.scores.partial && !(r.scores.capped || []).length ? `<span class="pill warn">部分项缺失</span>` : ""}
       </div>
       <div class="score-row">
         <div class="score-num is-score">${num(s.composite)}<small>综合分</small></div>

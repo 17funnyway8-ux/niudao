@@ -8,7 +8,7 @@
  */
 
 export const SUITE_VERSION = "1.0.0";
-export const CLIENT_VERSION = "2.2.0";
+export const CLIENT_VERSION = "2.3.0";
 
 /** 原始指标定义：unit 展示用，better 决定除法方向 */
 export const METRICS = {
@@ -67,34 +67,60 @@ const round = (n, digits = 0) => {
 
 /** 单个指标归一化到 1000 = 基准机水平 */
 /**
- * 单项归一化的上限。
+ * 单项封顶：**只封物理上不可能的，不封"机器真的强"的**。
  *
- * 为什么需要：归一化是线性外推，没有封顶的话一个失真指标就能把总分拉爆。
- * 真实案例（麒麟猪，Mac mini M4 上的 fnOS 虚机）：磁盘写在内存里被吞掉，
- * 顺序读报到 32 GB/s → 单项 76506 分 → 存储维度 31112 → 综合 13776，
- * 把 4 线程的 ARM 虚机顶到了全榜第一。
+ * 这里原先是 SUB_CAP = 3000 一刀切，把 CPU 多核也压住了 ——
+ * 一台 22 线程的 Core Ultra 7 多核 3.24 倍基准机是很正常的结果，却被削到 3000 分。
+ * 算力没有物理天花板，只有 I/O 有。
  *
- * 3000 分 = 基准机的 3 倍。家用 NAS 上，单指标跑到基准 3 倍以上，
- * 基本只能是缓存/虚拟化/测量失真，不是"这台机器真强"。宁可封顶并标注，
- * 也不能让一个坏数字污染整个榜。
+ * 封顶值是**用物理上限换算出来的**，不是一个拍脑袋的固定分数：
+ * 基准机是 SATA 盘（读 419 / 写 202 MB/s），直接拿"基准的 N 倍"当上限，
+ * 会误伤真实的 NVMe 池（读写 6–7 GB/s = 基准的 15–30 倍）。
+ *
+ * PHYSICAL_MAX 的含义是"现实硬件到不了这个数"：
+ *   · 磁盘顺序读 8000 MB/s：PCIe 4.0 单盘约 7000，再高就要靠多盘阵列
+ *   · 磁盘顺序写 7000 MB/s：同一代盘写入通常略低于读
+ *   · 4K 随机 50000 IOPS @QD1：消费级旗舰约 20–30k，企业级 Optane 也就 30k 上下
+ *   · 内存延迟 25 ns：DDR5 实测 40–70ns，25ns 已低于任何真实 DRAM
+ * 超过这些数，只能是被缓存/虚拟化放大出来的假值。
+ *
+ * 算力类（CPU 单核/多核、AES、zlib、内存带宽）**不封顶**：机器强就是强。
  */
-export const SUB_CAP = 3000;
+export const PHYSICAL_MAX = {
+  mem_latency: { min: 25 }, // 延迟越低越好，这里给下限
+  disk_seq_read: 8000, // MB/s
+  disk_seq_write: 7000, // MB/s
+  disk_rand_read: 50000, // IOPS (QD1)
+  disk_rand_write: 50000,
+};
+
+/** 某个指标的分数上限；null 表示不封顶。由物理上限与基准值换算而来。 */
+export function capOf(key, baselines) {
+  const spec = PHYSICAL_MAX[key];
+  const base = baselines?.[key];
+  if (!spec || !Number.isFinite(base) || base <= 0) return null;
+  if (Number.isFinite(spec.min)) return Math.round((base / spec.min) * 1000);
+  return Math.round((spec / base) * 1000);
+}
 
 export function normalizeMetric(key, raw, baselines) {
   const def = METRICS[key];
   const base = baselines?.[key];
   if (!def || !Number.isFinite(raw) || raw <= 0 || !Number.isFinite(base) || base <= 0) return null;
   const value = def.better === "higher" ? (raw / base) * 1000 : (base / raw) * 1000;
-  return value > SUB_CAP ? SUB_CAP : value;
+  const cap = capOf(key, baselines);
+  return cap !== null && value > cap ? cap : value;
 }
 
-/** 该指标是否触顶（用于在报告里标注"缓存/失真，分数已封顶"） */
+/** 该指标是否触顶（用于在报告里标注"物理上不可能，分数已封顶"） */
 export function isCapped(key, raw, baselines) {
   const def = METRICS[key];
   const base = baselines?.[key];
+  const cap = capOf(key, baselines);
+  if (cap === null) return false;
   if (!def || !Number.isFinite(raw) || !Number.isFinite(base) || base <= 0) return false;
   const value = def.better === "higher" ? (raw / base) * 1000 : (base / raw) * 1000;
-  return value > SUB_CAP;
+  return value > cap;
 }
 
 /**

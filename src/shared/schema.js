@@ -5,17 +5,25 @@
 import { METRIC_KEYS, SUITE_VERSION } from "./scoring.js";
 
 /** 物理上可能的取值区间，用来挡住明显伪造/坏数据 */
+/**
+ * 原始值的可信区间（第一道闸，挡住明显错误的输入；分数封顶是第二道）。
+ *
+ * 原则和 SCORE_CAP 一致：**算力给足，I/O 按物理收紧**。
+ *  - CPU 多核上限从 80000 放宽到 500000：双路 128 核 EPYC 大约 46 万，不能被判为异常
+ *  - 磁盘顺序上限从 100000 收到 30000：PCIe 5.0 单盘 ~14 GB/s，家用多盘阵列也难过 30 GB/s，
+ *    超过这个数基本是虚机把写吞进了内存
+ */
 export const PLAUSIBLE = {
-  cpu_single: [1, 5000],
-  cpu_multi: [1, 80000],
-  crypto_aes: [1, 200000],
+  cpu_single: [1, 8000],
+  cpu_multi: [1, 500000],
+  crypto_aes: [1, 300000],
   zlib: [1, 20000],
   mem_copy: [0.05, 5000],
   mem_latency: [5, 50000],
-  disk_seq_read: [0.5, 100000],
-  disk_seq_write: [0.5, 100000],
-  disk_rand_read: [1, 20000000],
-  disk_rand_write: [1, 20000000],
+  disk_seq_read: [0.5, 30000],
+  disk_seq_write: [0.5, 30000],
+  disk_rand_read: [1, 200000],
+  disk_rand_write: [1, 200000],
 };
 
 const str = (v, max = 120) =>

@@ -1,5 +1,5 @@
 appname=niudao
-version=2.2.0
+version=2.3.0
 display_name=牛刀 fnOS Benchmark
 desc=牛刀 · fnOS Benchmark：给飞牛 NAS 做一次硬件体检，CPU、内存、磁盘十项实测，出综合分与维度分，生成一份能贴到论坛的报告，并和别人的机器排进同一个天梯。
 source=thirdparty
@@ -12,4 +12,4 @@ desktop_applaunchname=niudao.main
 install_dep_apps=nodejs_v22:python312
 ctl_stop=true
 checkport=false
-changelog=2.2.0：磁盘卷显示介质类型与型号（顺 dm/RAID 追到物理盘）；单核测试在大小核机器上固定跑性能核，并记录钉核信息。
+changelog=2.3.0：修正分数封顶逻辑 —— CPU/内存带宽不再封顶（机器强就是强），只有磁盘按物理上限封顶，真实 NVMe 不再被误伤。

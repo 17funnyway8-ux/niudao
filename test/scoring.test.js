@@ -4,7 +4,8 @@ import fs from "node:fs";
 import {
   DIMENSIONS,
   METRIC_KEYS,
-  SUB_CAP,
+  PHYSICAL_MAX,
+  capOf,
   computeScores,
   formatMetric,
   gradeOf,
@@ -110,24 +111,43 @@ test("指标展示格式不会出现 NaN", () => {
   assert.equal(formatMetric("cpu_single", undefined), "—");
 });
 
-test("单项封顶：失真指标不能把总分拉爆（麒麟猪那次事故的回归测试）", () => {
+test("CPU 多核不封顶：机器强就是强，不能像以前那样一刀切到 3000", () => {
   const base = JSON.parse(fs.readFileSync(new URL("../src/server/data/baselines.json", import.meta.url), "utf8")).metrics;
-  // 真实数据：Mac mini M4 上的 fnOS 虚机，磁盘读报到 32 GB/s（写在内存里被吞了）
-  const metrics = {
-    cpu_single: 3616,
-    cpu_multi: 12745.6,
-    crypto_aes: 5743.8,
-    zlib: 72.5,
-    mem_copy: 59.87,
-    mem_latency: 41,
-    disk_seq_read: 32094.4,
-    disk_seq_write: 7976.3,
-    disk_rand_read: 159990,
-    disk_rand_write: 29950,
-  };
-  const s = computeScores(metrics, base);
-  assert.ok(s.composite < 3000, `综合分必须被封顶压住，实际 ${s.composite}`);
-  assert.ok(s.subs.disk_seq_read <= SUB_CAP, "单项不超过封顶值");
-  assert.ok(s.capped.includes("disk_seq_read"), "要标出哪些项触顶了");
-  assert.equal(s.partial, true, "有触顶项时报告要标「部分项异常」");
+  // Core Ultra 7 155H：22 线程，多核 3.24 倍基准机 —— 完全正常的真实结果
+  const s = computeScores(
+    { ...base, cpu_single: 3702.2, cpu_multi: 47161.1, crypto_aes: 2515.6, zlib: 64.5, mem_copy: 38.18, mem_latency: 65 },
+    base,
+  );
+  assert.equal(capOf("cpu_multi", base), null, "CPU 多核不该有分数上限");
+  assert.equal(capOf("cpu_single", base), null);
+  assert.equal(capOf("crypto_aes", base), null);
+  assert.ok(s.subs.cpu_multi > 3000, `多核应保留真实倍率（3240），实际 ${s.subs.cpu_multi}`);
+  assert.ok(!s.capped.includes("cpu_multi"));
+});
+
+test("磁盘封顶按物理上限换算，且不误伤真实 NVMe", () => {
+  const base = JSON.parse(fs.readFileSync(new URL("../src/server/data/baselines.json", import.meta.url), "utf8")).metrics;
+  // 真实 PCIe 4.0 NVMe 池：读 7 GB/s、写 6 GB/s、4K 28k/24k —— 必须一分不封
+  const realNvme = { ...base, disk_seq_read: 7000, disk_seq_write: 6000, disk_rand_read: 28000, disk_rand_write: 24000 };
+  const ok = computeScores(realNvme, base);
+  assert.deepEqual(ok.capped, [], `真实 NVMe 不该被任何项封顶，实际封了 ${ok.capped.join(",")}`);
+
+  // 虚机页缓存：顺序读 15 GB/s（超过 PCIe4 单盘上限）
+  const vm = { ...base, disk_seq_read: 15322.8, disk_rand_read: 87469 };
+  const capped = computeScores(vm, base);
+  assert.ok(capped.capped.includes("disk_seq_read"), "15 GB/s 顺序读超过物理上限，应被封");
+  assert.ok(capped.capped.includes("disk_rand_read"), "87k IOPS @QD1 超过物理上限，应被封");
+  assert.equal(capped.partial, true, "有触顶项时报告要标注");
+});
+
+test("封顶值是物理上限换算来的，不是拍脑袋的固定分数", () => {
+  const base = JSON.parse(fs.readFileSync(new URL("../src/server/data/baselines.json", import.meta.url), "utf8")).metrics;
+  for (const [key, spec] of Object.entries(PHYSICAL_MAX)) {
+    const cap = capOf(key, base);
+    assert.ok(Number.isFinite(cap) && cap > 0, `${key} 的分数上限算不出来`);
+    // 反算：上限分数对应的原始值应该等于 PHYSICAL_MAX
+    const rawAtCap = spec.min ? base[key] / (cap / 1000) : (cap / 1000) * base[key];
+    const expect = spec.min ?? spec;
+    assert.ok(Math.abs(rawAtCap - expect) / expect < 0.01, `${key}: 上限对应原值 ${rawAtCap.toFixed(1)} ≠ 物理上限 ${expect}`);
+  }
 });
