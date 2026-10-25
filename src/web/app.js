@@ -69,8 +69,55 @@ async function api(path, opts = {}) {
   } catch {
     data = { error: text.slice(0, 200) };
   }
-  if (!res.ok) throw new Error(data?.error || `请求失败 (${res.status})`);
+  if (!res.ok) {
+    const err = new Error(data?.error || `请求失败 (${res.status})`);
+    err.body = data; // 带上完整响应体：有些失败需要用它做回退（如 targetDir 的 fallback）
+    throw err;
+  }
   return data;
+}
+
+/**
+ * 应用内确认弹窗。替代 window.confirm ——
+ * 原生弹窗带着「10.1.1.26:5666 显示」这种域名标题，样式和应用完全不搭，
+ * 一眼就能看出是网页而不是应用。
+ * 返回 Promise<boolean>，用法：if (!(await ask("删除这条成绩？"))) return;
+ */
+function ask(message, { title = "确认", okText = "确定", cancelText = "取消", danger = false } = {}) {
+  return new Promise((resolve) => {
+    const wrap = document.createElement("div");
+    wrap.className = "modal-mask";
+    wrap.innerHTML = `
+      <div class="modal" role="dialog" aria-modal="true" aria-label="${escAttr(title)}">
+        <h3>${esc(title)}</h3>
+        <p>${esc(message)}</p>
+        <div class="modal-actions">
+          <button class="btn ghost" data-ask="cancel">${esc(cancelText)}</button>
+          <button class="btn ${danger ? "danger" : "primary"}" data-ask="ok">${esc(okText)}</button>
+        </div>
+      </div>`;
+    const close = (val) => {
+      wrap.remove();
+      document.removeEventListener("keydown", onKey);
+      resolve(val);
+    };
+    const onKey = (e) => {
+      if (e.key === "Escape") close(false);
+      if (e.key === "Enter") close(true);
+    };
+    wrap.addEventListener("click", (e) => {
+      const t = e.target.closest("[data-ask]")?.dataset.ask;
+      if (t === "ok") close(true);
+      else if (t === "cancel" || e.target === wrap) close(false);
+    });
+    document.addEventListener("keydown", onKey);
+    document.body.appendChild(wrap);
+    wrap.querySelector('[data-ask="cancel"]')?.focus();
+  });
+}
+
+function escAttr(s) {
+  return String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 }
 
 function toast(message, kind = "") {
@@ -213,8 +260,14 @@ function livePanel(run) {
   if (temp && (temp.cpuC !== null && temp.cpuC !== undefined)) {
     rows.push(`<div class="live-metric"><span class="live-value ${temp.cpuC >= 90 ? "is-warn" : ""}">${num(temp.cpuC, 1)}</span><span class="live-unit">°C</span><span class="live-label">CPU 温度</span></div>`);
   }
-  if (temp?.freqMhz) {
-    rows.push(`<div class="live-metric"><span class="live-value">${num(temp.freqMhz)}</span><span class="live-unit">MHz</span><span class="live-label">CPU 频率</span></div>`);
+  // 频率：单核阶段必须看**跑测试的那一个核**，不能取所有核平均。
+  // 单核跑满 2.0GHz 时，其余 15 个核空闲在 1.4GHz，平均下来只有 1.5GHz ——
+  // 用户看到会以为"频率没跑上去"，其实是口径问题（这个坑踩过一次）。
+  if (temp && (temp.freqMaxMhz || temp.freqMhz)) {
+    const single = run?.live?.stage === "cpu_single";
+    const mhz = single ? temp.freqMaxMhz || temp.freqMhz : temp.freqMhz || temp.freqMaxMhz;
+    const label = single ? "单核频率" : "全核平均频率";
+    rows.push(`<div class="live-metric"><span class="live-value">${num(mhz)}</span><span class="live-unit">MHz</span><span class="live-label">${label}</span></div>`);
   }
   if (!rows.length) return "";
   return `<div class="live-panel">${rows.join("")}</div>`;
@@ -1234,7 +1287,16 @@ async function saveSettings() {
     toast("已保存", "ok");
     await refreshBoot();
   } catch (e) {
-    toast(e.message, "err");
+    // 测试目录保存失败时，服务端会带回当前可用的路径。
+    // 把输入框退回那个路径 —— 否则用户会卡在"填了坏的、又改不回去"的状态里。
+    const fallback = e?.body?.fallback;
+    if (fallback) {
+      const input = $("#f-targetDir");
+      if (input) input.value = fallback;
+      toast(`${e.message}（已退回可用目录：${fallback}）`, "err");
+    } else {
+      toast(e.message, "err");
+    }
   }
 }
 
@@ -1386,7 +1448,7 @@ document.addEventListener("click", async (ev) => {
     return;
   }
   if (action === "delete-result") {
-    if (!confirm("删除这条成绩？")) return;
+    if (!(await ask("这条成绩会从本机历史里永久移除，无法恢复。", { title: "删除这条成绩？", okText: "删除", danger: true }))) return;
     await api(`/api/results/${id}`, { method: "DELETE" });
     toast("已删除");
     if (state.view === "result") state.view = "history";

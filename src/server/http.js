@@ -739,6 +739,18 @@ async function handleApi(req, res, url) {
 
   if (pathname === "/api/settings" && method === "GET") return json(res, 200, loadSettings());
 
+/**
+ * 测试目录保存失败的统一响应。
+ *
+ * 除了错误原因，还要带上 fallback —— 当前已保存、确认可用的目录。
+ * 用户填了一个没权限的路径时，光报错会把他卡在一个不可用状态里，
+ * 输入框里留着那个坏路径，下次保存还是失败。回退到可用路径才是干净的收场。
+ */
+function failTargetDir(res, settings, message) {
+  const fallback = settings?.targetDir || TARGET_DIR;
+  return json(res, 400, { error: message, fallback, reverted: true });
+}
+
   if (pathname === "/api/settings" && method === "POST") {
     const body = await readBody(req);
     const patch = {};
@@ -750,49 +762,52 @@ async function handleApi(req, res, url) {
     }
     if ("diskSizeMb" in body) patch.diskSizeMb = Math.max(64, Math.min(4096, Number(body.diskSizeMb) || 512));
     if (patch.targetDir) {
+      const current = loadSettings(); // 已保存、确认可用的配置（回退目标）
       // 校验用户填的目录：必须是已存在、可写、是目录。
       // 注意：绝不能对用户输入的路径做 recursive mkdir —— 某些文件系统（如 procfs）的 mkdir
       // 返回 ENOENT，会让 Node 的递归建目录陷入死循环，直接把整个事件循环卡死。
       const dir = String(patch.targetDir);
       if (!path.isAbsolute(dir)) {
-        return json(res, 400, { error: "测试目录必须是绝对路径，例如 /vol1/@appdata/niudao" });
+        return failTargetDir(res, current, "测试目录必须是绝对路径，例如 /vol1/@appdata/niudao");
       }
       // 先确认"是个目录"（提示更准确），再解析真实路径挡住符号链接绕过
       let stat0 = null;
       try {
         stat0 = fs.statSync(dir);
       } catch {
-        return json(res, 400, {
-          error: `测试目录不存在：${dir}。请先在飞牛「文件管理」里新建这个文件夹，或改用一个已存在的目录。`,
-        });
+        return failTargetDir(
+          res,
+          current,
+          `测试目录不存在：${dir}。请先在飞牛「文件管理」里新建这个文件夹，或改用一个已存在的目录。`,
+        );
       }
-      if (!stat0.isDirectory()) return json(res, 400, { error: `不是目录：${dir}` });
+      if (!stat0.isDirectory()) return failTargetDir(res, current, `不是目录：${dir}`);
 
       let realDir = dir;
       try {
         realDir = fs.realpathSync(dir);
       } catch {
-        return json(res, 400, { error: `测试目录不存在：${dir}（请先创建，或换成已存在的卷目录）` });
+        return failTargetDir(res, current, `测试目录不存在：${dir}（请先创建，或换成已存在的卷目录）`);
       }
       if (realDir !== dir) {
-        return json(res, 400, { error: `测试目录不能是符号链接：${dir} → ${realDir}（请填真实路径）` });
+        return failTargetDir(res, current, `测试目录不能是符号链接：${dir} → ${realDir}（请填真实路径）`);
       }
       // 系统性目录一律拒绝：体检只会往这里写大文件，没有正当理由
       const DENY = ["/etc", "/usr", "/bin", "/sbin", "/lib", "/lib64", "/boot", "/proc", "/sys", "/dev", "/root"];
       if (DENY.some((d) => realDir === d || realDir.startsWith(`${d}/`))) {
-        return json(res, 400, { error: `这个目录不能做测试卷（系统目录）：${realDir}` });
+        return failTargetDir(res, current, `这个目录不能做测试卷（系统目录）：${realDir}`);
       }
       try {
         fs.accessSync(dir, fs.constants.W_OK);
       } catch {
-        return json(res, 400, { error: `测试目录不可写：${dir}（应用以 niudao 用户运行，请给它写权限）` });
+        return failTargetDir(res, current, `测试目录不可写：${dir}（应用以 niudao 用户运行，请给它写权限）`);
       }
       const probe = path.join(dir, ".niudao-probe");
       try {
         fs.writeFileSync(probe, "ok");
         fs.rmSync(probe, { force: true });
       } catch (e) {
-        return json(res, 400, { error: `测试目录写入失败：${dir}（${e.code || e.message}）` });
+        return failTargetDir(res, current, `测试目录写入失败：${dir}（${e.code || e.message}）`);
       }
       patch.targetDir = dir;
     }

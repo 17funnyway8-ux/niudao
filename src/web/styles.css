@@ -794,3 +794,34 @@ input[type="checkbox"] { width: 14px; height: 14px; accent-color: var(--accent);
 .vol-cell { display: flex; flex-direction: column; gap: 2px; align-items: flex-start; }
 .vol-path { word-break: break-all; font-size: 12.5px; }
 .vol-meta { font-size: 11.5px; color: var(--muted); }
+
+/* ---------------- 应用内确认弹窗 ----------------
+   替代 window.confirm：原生弹窗顶部会显示「10.1.1.26:5666 显示」这种域名标题，
+   一眼就暴露"这是个网页"。 */
+.modal-mask {
+  position: fixed;
+  inset: 0;
+  background: color-mix(in srgb, var(--brand-ink) 42%, transparent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 300;
+  padding: 20px;
+  animation: fade-in 120ms ease-out;
+}
+@keyframes fade-in { from { opacity: 0; } }
+.modal {
+  width: min(360px, 100%);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 18px 20px 16px;
+  box-shadow: 0 12px 40px -8px color-mix(in srgb, var(--brand-ink) 40%, transparent);
+  animation: modal-rise 140ms cubic-bezier(.2,.8,.3,1);
+}
+@keyframes modal-rise { from { opacity: 0; transform: translateY(8px) scale(.98); } }
+.modal h3 { margin: 0 0 8px; font-size: 15px; font-weight: 600; }
+.modal p { margin: 0 0 18px; font-size: 13px; line-height: 1.6; color: var(--muted); }
+.modal-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.btn.danger { background: var(--bad); border-color: var(--bad); color: #fff; }
+.btn.danger:hover { filter: brightness(1.08); }

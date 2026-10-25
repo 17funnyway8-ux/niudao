@@ -211,3 +211,24 @@ test("CSP 必须放行内联样式（style-src 'unsafe-inline'），否则整个
   assert.match(csp, /script-src 'self'/, `script-src 不该被放宽，实际：${csp}`);
   assert.ok(!/script-src[^;]*unsafe-inline/.test(csp), "script-src 绝不能加 unsafe-inline");
 });
+
+test("测试目录保存失败要带回可用路径（前端好回退，不把用户卡在坏配置上）", async () => {
+  const before = await get("/api/settings");
+  const good = before.body.targetDir;
+
+  // 填一个不存在的路径
+  const bad = await post("/api/settings", { targetDir: "/vol9/definitely-not-exist/niudao" });
+  assert.equal(bad.status, 400);
+  assert.ok(bad.body.error.includes("不存在"), `错误信息应说明原因，实际：${bad.body.error}`);
+  assert.equal(bad.body.fallback, good, "必须带回当前可用的目录，供前端回退");
+  assert.equal(bad.body.reverted, true);
+
+  // 系统目录也要带 fallback
+  const sys = await post("/api/settings", { targetDir: "/etc" });
+  assert.equal(sys.status, 400);
+  assert.ok(sys.body.fallback, "系统目录被拒时同样要给回退路径");
+
+  // 坏路径不该被写进配置
+  const after = await get("/api/settings");
+  assert.equal(after.body.targetDir, good, "保存失败不能改动已有配置");
+});
