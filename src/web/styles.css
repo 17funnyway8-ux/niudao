@@ -853,3 +853,17 @@ input[type="checkbox"] { width: 14px; height: 14px; accent-color: var(--accent);
 .qr-zoom { display: flex; justify-content: center; margin: 4px 0 14px; }
 .qr-zoom .qr-btn { cursor: default; }
 .modal-qr p { margin: 0 0 14px; }
+
+/* 公众号引导：复刻"微信搜一搜 + 绿色公众号名"的常见样式，
+   比纯文字更像官方名片，也更容易被认出来 */
+.mp-name {
+  display: inline-block;
+  margin: 2px 0 6px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: #07c160;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: .01em;
+}

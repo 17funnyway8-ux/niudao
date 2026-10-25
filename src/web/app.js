@@ -63,8 +63,12 @@ const rel = (p) => String(p).replace(/^\/+/, "");
  * 公众号合集。manifest 的 distributor_url 是同一份地址（两处要保持一致，
  * 由 test/version.test.js 校验）。放这里是为了在应用内也能生成二维码。
  */
-const MP_ALBUM_URL =
-  "https://mp.weixin.qq.com/mp/appmsgalbum?__biz=MzkyOTcwMzE0MQ==&action=getalbum&album_id=4707355291124957184";
+const MP_BIZ = "MzkyOTcwMzE0MQ==";
+/** 公众号主页：扫码直达，比"合集页"更符合"关注"的意图 */
+const MP_HOME_URL = `https://mp.weixin.qq.com/mp/profile_ext?action=home&__biz=${MP_BIZ}`;
+/** 合集的完整地址（manifest 里 distributor_url 用的是它） */
+const MP_ALBUM_URL = `https://mp.weixin.qq.com/mp/appmsgalbum?__biz=${MP_BIZ}&action=getalbum&album_id=4707355291124957184`;
+const MP_NAME = "家有飞牛Fun";
 
 async function api(path, opts = {}) {
   const res = await fetch(rel(path), {
@@ -140,7 +144,7 @@ function mpQrCode(size = 120) {
   let q;
   try {
     q = qrcode(0, "M");
-    q.addData(MP_ALBUM_URL);
+    q.addData(MP_HOME_URL);
     q.make();
   } catch {
     return `<div class="qr-fallback">二维码生成失败，可直接访问<br/><span class="mono">${esc(MP_ALBUM_URL)}</span></div>`;
@@ -621,8 +625,7 @@ function deepResultView(r) {
       <div class="row" style="margin-top:14px;gap:8px;flex-wrap:wrap">
         <a class="btn" href="api/results/${esc(r.id)}/report.md" target="_blank" rel="noreferrer">Markdown 报告</a>
         <a class="btn ghost" href="api/results/${esc(r.id)}/export.json">导出 JSON</a>
-        <span class="spacer"></span>
-        <a class="faint" style="font-size:12px" href="javascript:void 0" data-action="goto-about">这台机器该不该升级？看看别人的实测 →</a>
+
       </div>
     </div>
 
@@ -726,9 +729,6 @@ function resultView() {
         <span class="spacer"></span>
         <div class="row" style="flex-wrap:wrap">
           <button class="btn primary" data-action="download-card" data-id="${esc(r.id)}">保存成绩图</button>
-          <button class="btn" data-action="copy-image" data-id="${esc(r.id)}">复制图片</button>
-          <button class="btn" data-action="copy-share" data-id="${esc(r.id)}">复制晒单文案</button>
-          <button class="btn ghost" data-action="toggle-card" data-id="${esc(r.id)}">${state.showCard ? "收起卡片" : "预览卡片"}</button>
           <button class="btn ghost" data-action="submit-result" data-id="${esc(r.id)}">提交到天梯</button>
           <a class="btn ghost" href="api/results/${esc(r.id)}/report.md" target="_blank" rel="noreferrer">Markdown</a>
           <a class="btn ghost" href="api/results/${esc(r.id)}/export.json">JSON</a>
@@ -1128,8 +1128,9 @@ function settingsView() {
       <div class="mp-block">
         ${mpQrCode(112)}
         <div class="mp-info">
-          <div class="mp-title">牛刀 · 公众号</div>
-          <div class="mp-desc">版本更新、新机型实测数据、装机避坑，都发在这里。手机扫一下，或点二维码放大。</div>
+          <div class="mp-title">微信搜一搜</div>
+          <div class="mp-name">${esc(MP_NAME)}</div>
+          <div class="mp-desc">版本更新、新机型实测数据、装机避坑，都发在这里。手机扫码也能直接关注。</div>
         </div>
       </div>
       <div class="divider"></div>
@@ -1523,18 +1524,14 @@ document.addEventListener("click", async (ev) => {
     }
     return;
   }
-  if (action === "goto-about") {
-    navigate("#/settings");
-    return;
-  }
   if (action === "zoom-qr") {
     // 桌面浏览器里手机扫屏幕，112px 偏小 —— 点一下放大到 260px
     const wrap = document.createElement("div");
     wrap.className = "modal-mask";
     wrap.innerHTML = `<div class="modal modal-qr">
-      <h3>牛刀 · 公众号</h3>
+      <h3>微信搜一搜「${esc(MP_NAME)}」</h3>
       <div class="qr-zoom">${mpQrCode(260)}</div>
-      <p>版本更新、新机型实测数据、装机避坑都在这里。</p>
+      <p>扫码直达公众号。版本更新、新机型实测数据、装机避坑都在这里。</p>
       <div class="modal-actions"><button class="btn ghost" data-close="1">关闭</button></div>
     </div>`;
     const close = () => {

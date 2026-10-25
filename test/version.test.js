@@ -58,11 +58,15 @@ test("发布者/开发者外链格式合法（应用中心会直接渲染成可�
   }
 });
 
-test("公众号链接在 manifest 与应用内必须一致（两处手写，容易漂）", () => {
+test("公众号 __biz 必须一致（manifest 用合集链接、应用内用主页链接，但得是同一个号）", () => {
   const manifestUrl = (read("package/manifest").match(/^distributor_url\s*=\s*(\S+)$/m) || [])[1];
   const appJs = read("src/web/app.js");
-  const constUrl = (appJs.match(/const MP_ALBUM_URL =\s*\n?\s*"([^"]+)"/) || [])[1];
+  const biz = (appJs.match(/const MP_BIZ = "([^"]+)"/) || [])[1];
   assert.ok(manifestUrl, "manifest 缺 distributor_url");
-  assert.ok(constUrl, "app.js 缺 MP_ALBUM_URL");
-  assert.equal(constUrl, manifestUrl, "应用内二维码指向的地址必须和 manifest 里的一致");
+  assert.ok(biz, "app.js 里找不到 MP_BIZ");
+
+  const bizOf = (u) => (String(u).match(/__biz=([A-Za-z0-9+/=]+)/) || [])[1];
+  assert.equal(bizOf(manifestUrl), biz, `manifest 的公众号 __biz 与应用内不一致：${bizOf(manifestUrl)} vs ${biz}`);
+  // 应用内二维码指向的必须是主页链接（扫码直达关注），不是合集页
+  assert.match(appJs, /profile_ext\?action=home/, "二维码应指向公众号主页");
 });
