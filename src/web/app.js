@@ -28,6 +28,8 @@ document.getElementById("theme-toggle")?.addEventListener("click", () => {
   localStorage.setItem(THEME_KEY, next);
   document.documentElement.dataset.theme = next;
 });
+import qrcode from "./vendor-qrcode.js";
+
 const appEl = () => $("#app");
 
 const esc = (s) =>
@@ -56,6 +58,13 @@ const state = {
 /* ---------------- api ---------------- */
 // 所有接口都用**相对路径**：<base> 已经指向 /app/niudao/ 或 /，带前导斜杠会绕过它
 const rel = (p) => String(p).replace(/^\/+/, "");
+
+/**
+ * 公众号合集。manifest 的 distributor_url 是同一份地址（两处要保持一致，
+ * 由 test/version.test.js 校验）。放这里是为了在应用内也能生成二维码。
+ */
+const MP_ALBUM_URL =
+  "https://mp.weixin.qq.com/mp/appmsgalbum?__biz=MzkyOTcwMzE0MQ==&action=getalbum&album_id=4707355291124957184";
 
 async function api(path, opts = {}) {
   const res = await fetch(rel(path), {
@@ -118,6 +127,37 @@ function ask(message, { title = "确认", okText = "确定", cancelText = "取�
 
 function escAttr(s) {
   return String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
+/**
+ * 公众号二维码。
+ *
+ * 只在「关于」里放一处：这是用户主动找"这软件谁做的、还有没有更多东西"的位置，
+ * 属于预期之内。首屏/弹窗/成绩卡里都不放 —— 那是把测量工具变成营销物料的地方。
+ * 桌面浏览器里手机扫屏幕，120px 偏小，所以点一下能放大到 260px。
+ */
+function mpQrCode(size = 120) {
+  let q;
+  try {
+    q = qrcode(0, "M");
+    q.addData(MP_ALBUM_URL);
+    q.make();
+  } catch {
+    return `<div class="qr-fallback">二维码生成失败，可直接访问<br/><span class="mono">${esc(MP_ALBUM_URL)}</span></div>`;
+  }
+  const n = q.getModuleCount();
+  let path = "";
+  for (let r = 0; r < n; r += 1) {
+    for (let c = 0; c < n; c += 1) {
+      if (q.isDark(r, c)) path += `M${c} ${r}h1v1h-1z`;
+    }
+  }
+  return `<button class="qr-btn" data-action="zoom-qr" title="点击放大">
+      <svg class="qr-svg" viewBox="0 0 ${n} ${n}" width="${size}" height="${size}" shape-rendering="crispEdges" aria-label="公众号二维码">
+        <rect width="${n}" height="${n}" fill="#fff"/>
+        <path d="${path}" fill="#0b0f14"/>
+      </svg>
+    </button>`;
 }
 
 function toast(message, kind = "") {
@@ -581,6 +621,8 @@ function deepResultView(r) {
       <div class="row" style="margin-top:14px;gap:8px;flex-wrap:wrap">
         <a class="btn" href="api/results/${esc(r.id)}/report.md" target="_blank" rel="noreferrer">Markdown 报告</a>
         <a class="btn ghost" href="api/results/${esc(r.id)}/export.json">导出 JSON</a>
+        <span class="spacer"></span>
+        <a class="faint" style="font-size:12px" href="javascript:void 0" data-action="goto-about">这台机器该不该升级？看看别人的实测 →</a>
       </div>
     </div>
 
@@ -1083,6 +1125,14 @@ function settingsView() {
         <dt>数据</dt><dd class="faint">本机成绩存在应用数据目录（results.jsonl），删除应用前先导出。</dd>
       </dl>
       <div class="divider"></div>
+      <div class="mp-block">
+        ${mpQrCode(112)}
+        <div class="mp-info">
+          <div class="mp-title">牛刀 · 公众号</div>
+          <div class="mp-desc">版本更新、新机型实测数据、装机避坑，都发在这里。手机扫一下，或点二维码放大。</div>
+        </div>
+      </div>
+      <div class="divider"></div>
       <div class="row" style="gap:10px;flex-wrap:wrap;align-items:center">
         <button class="btn" data-action="open-feedback">反馈问题 / 发送日志</button>
         <span class="faint" style="font-size:12px">发现算错、卡住、看不懂 —— 点这里，带上环境与日志，我才能改得动。</span>
@@ -1471,6 +1521,34 @@ document.addEventListener("click", async (ev) => {
     } catch {
       toast("复制失败，可以手动导出 Markdown", "err");
     }
+    return;
+  }
+  if (action === "goto-about") {
+    navigate("#/settings");
+    return;
+  }
+  if (action === "zoom-qr") {
+    // 桌面浏览器里手机扫屏幕，112px 偏小 —— 点一下放大到 260px
+    const wrap = document.createElement("div");
+    wrap.className = "modal-mask";
+    wrap.innerHTML = `<div class="modal modal-qr">
+      <h3>牛刀 · 公众号</h3>
+      <div class="qr-zoom">${mpQrCode(260)}</div>
+      <p>版本更新、新机型实测数据、装机避坑都在这里。</p>
+      <div class="modal-actions"><button class="btn ghost" data-close="1">关闭</button></div>
+    </div>`;
+    const close = () => {
+      wrap.remove();
+      document.removeEventListener("keydown", onKey);
+    };
+    const onKey = (e) => {
+      if (e.key === "Escape") close();
+    };
+    wrap.addEventListener("click", (e) => {
+      if (e.target === wrap || e.target.closest("[data-close]")) close();
+    });
+    document.addEventListener("keydown", onKey);
+    document.body.appendChild(wrap);
     return;
   }
   if (action === "delete-result") {

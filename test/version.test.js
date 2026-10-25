@@ -57,3 +57,12 @@ test("发布者/开发者外链格式合法（应用中心会直接渲染成可�
     assert.ok(url.length > 20 && url.length < 300, `${key} 长度异常：${url.length}`);
   }
 });
+
+test("公众号链接在 manifest 与应用内必须一致（两处手写，容易漂）", () => {
+  const manifestUrl = (read("package/manifest").match(/^distributor_url\s*=\s*(\S+)$/m) || [])[1];
+  const appJs = read("src/web/app.js");
+  const constUrl = (appJs.match(/const MP_ALBUM_URL =\s*\n?\s*"([^"]+)"/) || [])[1];
+  assert.ok(manifestUrl, "manifest 缺 distributor_url");
+  assert.ok(constUrl, "app.js 缺 MP_ALBUM_URL");
+  assert.equal(constUrl, manifestUrl, "应用内二维码指向的地址必须和 manifest 里的一致");
+});

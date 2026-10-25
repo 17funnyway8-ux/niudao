@@ -825,3 +825,31 @@ input[type="checkbox"] { width: 14px; height: 14px; accent-color: var(--accent);
 .modal-actions { display: flex; justify-content: flex-end; gap: 8px; }
 .btn.danger { background: var(--bad); border-color: var(--bad); color: #fff; }
 .btn.danger:hover { filter: brightness(1.08); }
+
+/* 公众号二维码：只在「关于」里出现一次。
+   放这里是用户主动找"这软件谁做的"的位置；首屏/弹窗/成绩卡里都不放。 */
+.mp-block {
+  display: flex;
+  gap: 14px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.qr-btn {
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #fff;
+  line-height: 0;
+  cursor: zoom-in;
+  overflow: hidden;
+}
+.qr-btn:hover { border-color: var(--accent); }
+.qr-svg { display: block; }
+.qr-fallback { font-size: 12px; color: var(--muted); line-height: 1.5; }
+.mp-info { flex: 1 1 160px; min-width: 0; }
+.mp-title { font-size: 13px; font-weight: 600; margin-bottom: 4px; }
+.mp-desc { font-size: 12px; line-height: 1.6; color: var(--muted); }
+.modal-qr { width: min(320px, 100%); text-align: center; }
+.qr-zoom { display: flex; justify-content: center; margin: 4px 0 14px; }
+.qr-zoom .qr-btn { cursor: default; }
+.modal-qr p { margin: 0 0 14px; }
