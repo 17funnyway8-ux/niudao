@@ -44,3 +44,16 @@ test("套件版本独立于客户端版本，且格式合法", async () => {
   // 客户端与套件是两条版本线，不该强行相等（套件只在评分口径变化时才动）
   assert.ok(typeof manifestVersion === "string");
 });
+
+test("发布者/开发者外链格式合法（应用中心会直接渲染成可点链接）", () => {
+  const manifest = read("package/manifest");
+  for (const key of ["maintainer_url", "distributor_url"]) {
+    const m = manifest.match(new RegExp(`^${key}\\s*=\\s*(\\S+)$`, "m"));
+    if (!m) continue;
+    const url = m[1];
+    assert.match(url, /^https:\/\/\S+$/, `${key} 必须是 https 链接，实际：${url}`);
+    // manifest 是 key=value，# 之后会被当注释截断 —— 带 fragment 的链接会被悄悄破坏
+    assert.ok(!url.includes("#"), `${key} 不能带 #（manifest 会把 # 之后当注释截掉），实际：${url}`);
+    assert.ok(url.length > 20 && url.length < 300, `${key} 长度异常：${url.length}`);
+  }
+});
