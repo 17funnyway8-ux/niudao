@@ -478,11 +478,22 @@ export function detectEnv() {
     if (!tech) tech = hypType;
   }
 
+  const hasHypervisor = /^flags\s*:.*\bhypervisor\b/m.test(cpuinfo);
   const isVm = Boolean(tech);
   envCache = {
-    type: container ? "container" : isVm ? "vm" : "physical",
+    type: (() => {
+      if (container) return "container";
+      if (isVm) return "vm";
+      // 没有 DMI 又不是 fnOS：真实物理机不可能这样，基本是沙箱/容器
+      const boardText = [dmi.sys_vendor, dmi.product_name, dmi.board_vendor].filter(Boolean).join("").trim();
+      const osv = (process.env.TRIM_SYS_VERSION || read("/etc/fnos-version") || read("/etc/os-release") || "").toString();
+      // 只认明确的其它发行版/沙箱内核，不能写"不含 fnOS 就算容器"（版本号格式不统一会误伤真机）
+      if (!boardText && /debian|ubuntu|centos|alpine|arch linux|fedora|instabox|openwrt|buildroot/i.test(osv)) return "container";
+      return "physical";
+    })(),
     tech: isVm ? tech : container ? "容器" : "",
     evidence: evidence.slice(0, 4),
+    hypervisor: hasHypervisor,
     // 混合场景（容器跑在虚机里）单独标出来，属于最不适合进真机榜的一类
     containerOnVm: container && isVm,
   };

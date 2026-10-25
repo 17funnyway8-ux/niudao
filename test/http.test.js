@@ -194,3 +194,15 @@ test("体检结论：三句人话 + 弱项 + 建议；公共榜不通时也不�
   assert.equal(v.body.board.ok, false, "连不上要如实标记");
   assert.equal(v.body.sameModel, null);
 });
+
+test("CSP 必须放行内联样式（style-src 'unsafe-inline'），否则整个前端会静默降级", async () => {
+  // 真实事故：2.0 加 CSP 时写成 style-src 'self'，浏览器直接丢弃所有 style="..." 属性。
+  // 界面看起来还在，但所有动态尺寸（图表高度、间距、进度条）全变 0 ——
+  // 分数分布图整块不显示，用户只反馈"文字很挤"，根因埋了两个版本才发现。
+  const res = await fetch(`${base}/`);
+  const csp = res.headers.get("content-security-policy") || "";
+  assert.match(csp, /style-src[^;]*'unsafe-inline'/, `style-src 必须允许内联样式，实际：${csp}`);
+  // script 仍然只信任自身，XSS 执行依旧被挡住
+  assert.match(csp, /script-src 'self'/, `script-src 不该被放宽，实际：${csp}`);
+  assert.ok(!/script-src[^;]*unsafe-inline/.test(csp), "script-src 绝不能加 unsafe-inline");
+});

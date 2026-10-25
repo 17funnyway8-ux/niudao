@@ -52,16 +52,17 @@ function rateLimit(ip, key, limit, windowMs) {
   return b.count <= limit;
 }
 
-/**
- * 服务端复核运行环境：不信客户端的自报值。
- * 旧版本客户端不会上报 env_type，被改过的客户端也可能谎报 physical；
- * 但 hardware.board / cpu_model 里的虚拟化字样是它自己交上来的，赖不掉。
- */
+/** 服务端复核运行环境，判据同 Worker 端（见 worker/src/index.js 注释） */
 function serverEnvOverride(hardware) {
   const hay = [hardware?.board, hardware?.cpu_model, hardware?.gpu, hardware?.os_version].filter(Boolean).join(" ");
   if (/qemu|kvm|proxmox|vmware|virtualbox|innotek|parallels|xen|hyper-?v|microsoft corporation|bochs|virtual machine/i.test(hay)) {
     return "vm";
   }
+  if (hardware?.hypervisorFlag === true) return "vm";
+  const board = String(hardware?.board || "").trim();
+  const osv = String(hardware?.osVersion || hardware?.os_version || "");
+  const foreignOs = /debian|ubuntu|centos|alpine|arch linux|fedora|instabox|openwrt|buildroot/i.test(osv);
+  if (!board && foreignOs) return "container";
   return null;
 }
 

@@ -394,26 +394,41 @@ function homeView() {
             </div>`
           : ""
       }
-      <div class="row" style="gap:8px;flex-wrap:wrap;margin-bottom:12px">
-        ${deepPresets
-          .map(
-            (sec) =>
-              `<button class="btn sm ${state.deep.durationSec === sec ? "primary" : "ghost"}" data-action="deep-duration" data-sec="${sec}">${sec / 60} 分钟${sec === 300 ? "（推荐）" : ""}</button>`,
-          )
-          .join("")}
+      <div class="field">
+        <div class="field-label">烤机时长</div>
+        <div class="seg">
+          ${deepPresets
+            .map(
+              (sec) =>
+                `<button class="btn sm ${state.deep.durationSec === sec ? "primary" : "ghost"}" data-action="deep-duration" data-sec="${sec}">${sec / 60} 分钟</button>`,
+            )
+            .join("")}
+        </div>
+        <p class="field-hint">烤完立刻复测一次多核，看满载后还剩多少性能${state.deep.durationSec >= 300 ? "。时间越长越能看出散热瓶颈，5 分钟是常用档" : ""}。</p>
       </div>
-      <div class="faint" style="font-size:12px;margin-bottom:10px">烤完立刻再跑一次多核，看满载后还剩多少性能。结果会明确分四档，不会只给个"还行"。</div>
-      <label class="check" style="margin-bottom:14px">
-        <input type="checkbox" id="deep-disk" ${state.deep.loadDisk ? "checked" : ""} />
-        叠加磁盘写压力（更接近 RAID 重建时的机箱温度，但会磨损 SSD）
-      </label>
-      <div class="row">
+
+      <div class="field">
+        <div class="field-label">附加压力</div>
+        <label class="check">
+          <input type="checkbox" id="deep-disk" ${state.deep.loadDisk ? "checked" : ""} />
+          叠加磁盘写压力
+        </label>
+        <p class="field-hint">更接近 RAID 重建时的机箱温度，代价是会消耗 SSD 写入寿命，按需开启。</p>
+      </div>
+
+      <div class="deep-actions">
         <button class="btn ${deepRunning ? "" : "primary"}" data-action="start-deep" ${deepRunning ? "disabled" : ""}>开始深度体检</button>
-        <span class="faint" style="font-size:12px">会满载 ${state.deep.durationSec / 60} 分钟，建议在没人用的时候跑</span>
+        <span class="field-hint">将满载 ${state.deep.durationSec / 60} 分钟，建议在没人使用 NAS 的时候跑</span>
       </div>
-      <div class="notice" style="margin-top:12px">
-        稳定性按逐轮吞吐计算（最差轮 ÷ 最好轮），≥97% 判合格；温度与频率作为旁证。
-      </div>
+
+      <details class="deep-method">
+        <summary>怎么判定</summary>
+        <ul>
+          <li>稳定性 = 满载期间<b>最差一轮吞吐 ÷ 最好一轮吞吐</b>，逐轮取样，不靠单点。</li>
+          <li>分四档：≥97% 合格、94–97% 轻微衰减、88–94% 明显降频、&lt;88% 散热吃紧。</li>
+          <li>温度与频率作为旁证一并记录：温度高但没降频，说明散热还 hold 得住。</li>
+        </ul>
+      </details>
     </div>`;
 
   return `<div class="grid-2">
@@ -728,20 +743,49 @@ function boardView() {
     const gap = me && me.above && Number.isFinite(me.above.value) ? Math.max(0, me.above.value - me.value) : null;
     const hist = (() => {
       const buckets = data.buckets || {};
-      const keys = Object.keys(buckets).map(Number).sort((a, b) => a - b);
-      if (keys.length < 2) return "";
-      const max = Math.max(...keys.map((k) => buckets[k]));
-      const mine = me ? Math.floor(me.value / 100) * 100 : null;
-      return `<div class="section-title" style="margin-top:18px">人群分布（每 100 分一档）</div>
-        <div class="hist" title="柱子越高代表这一档的机器越多；亮色是你所在的档">
-          ${keys
-            .map(
-              (k) =>
-                `<i class="${k === mine ? "on" : ""}" style="height:${Math.max(6, (buckets[k] / max) * 100)}%" title="${k}–${k + 99} 分 · ${buckets[k]} 台"></i>`,
-            )
+      const rawKeys = Object.keys(buckets).map(Number).sort((a, b) => a - b);
+      if (!rawKeys.length) return "";
+      const lo = Math.min(...rawKeys);
+      const hi = Math.max(...rawKeys);
+      // 档宽自适应：100 分一档在分数跨度大时会切出几十个空档，柱子细得看不清。
+      // 目标 10–14 档，档宽从 100 起逐级放大。
+      const span = hi - lo + 100;
+      const bw = [100, 200, 250, 500, 1000, 2000].find((w) => span / w <= 14) || 2000;
+      const start = Math.floor(lo / bw) * bw;
+      const slots = [];
+      for (let k = start; k <= hi; k += bw) {
+        let n = 0;
+        for (let j = k; j < k + bw; j += 100) n += buckets[j] || 0;
+        slots.push({ from: k, to: k + bw - 1, n });
+      }
+      const max = Math.max(1, ...slots.map((x) => x.n));
+      const mySlot = me && Number.isFinite(me.value) ? slots.findIndex((x) => me.value >= x.from && me.value <= x.to) : -1;
+      const total = data.total || 0;
+      const kfmt = (v) => (v >= 1000 ? `${(v / 1000).toFixed(v % 1000 === 0 ? 0 : 1)}k` : String(v));
+      return `<div class="dist">
+        <div class="dist-head">
+          <span>分数分布</span>
+          <span class="faint">每 ${bw} 分一档 · 柱高 = 该档机器数 · 共 ${num(total)} 台</span>
+        </div>
+        <div class="dist-plot">
+          ${slots
+            .map((slot, i) => {
+              const h = slot.n === 0 ? 0 : Math.max(5, (slot.n / max) * 100);
+              const isMine = i === mySlot;
+              return `<div class="dist-slot${isMine ? " is-mine" : ""}${slot.n === 0 ? " is-empty" : ""}"
+                          title="${slot.from}–${slot.to} 分：${slot.n} 台${isMine ? "（我这里）" : ""}">
+                ${slot.n > 0 ? `<span class="dist-num">${slot.n}</span>` : ""}
+                <i style="height:${h}%"></i>
+              </div>`;
+            })
             .join("")}
         </div>
-        <div class="row faint" style="font-size:11px;margin-top:4px"><span>${num(keys[0])} 分</span><span class="spacer"></span><span>${num(keys[keys.length - 1] + 99)} 分</span></div>`;
+        <div class="dist-axis">
+          <span>${kfmt(slots[0].from)}</span>
+          ${mySlot >= 0 ? `<span class="dist-me" style="left:${((mySlot + 0.5) / slots.length) * 100}%">我</span>` : ""}
+          <span>${kfmt(slots[slots.length - 1].to)}</span>
+        </div>
+      </div>`;
     })();
     const stats = data.stats || null;
     const staleNote = data.unavailable

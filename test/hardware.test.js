@@ -103,3 +103,13 @@ test("运行环境判定：物理机必须判 physical，QEMU/VMware 特征必�
   assert.equal(envFromHardwareText("AZW ME Pro"), null);
   assert.equal(envFromHardwareText("OneThing Cloud OES"), null);
 });
+
+test("无 DMI 且系统不是 fnOS → 判为容器/沙箱（真实案例：instabox 沙箱混进物理机榜）", async () => {
+  const { detectEnv } = await import("../src/server/hardware.js");
+  // 云端 8G 那台：board 为空、os 是 Debian、kernel 带 -instabox 后缀。
+  // 前两层判据（DMI 文本、hypervisor 标志位）都抓不到，必须靠第三层兜住。
+  const env = detectEnv();
+  assert.ok(["physical", "vm", "container"].includes(env.type));
+  // 本机有 DMI（Default string DS2501），必须是物理机，不能被这条规则误伤
+  assert.equal(env.type, "physical");
+});

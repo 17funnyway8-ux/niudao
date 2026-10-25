@@ -635,3 +635,144 @@ input[type="checkbox"] { width: 14px; height: 14px; accent-color: var(--accent);
 .seg .btn:first-child { border-radius: 4px 0 0 4px; }
 .seg .btn:last-child { border-radius: 0 4px 4px 0; }
 .seg .btn + .btn { border-left: none; }
+
+/* ---------------- 分数分布直方图 ----------------
+   原来的 .hist 只有 HTML 没有样式，且只渲染"有机器的档"，
+   结果横轴不等距、柱子高度百分比也无处参照 —— 整块是空的。
+   现在：固定绘图高度 + 补齐空档 + 我所在的档用品牌绿标出来。 */
+.dist { margin-top: 18px; }
+.dist-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 12.5px;
+  font-weight: 600;
+  margin-bottom: 10px;
+}
+.dist-head .faint { font-weight: 400; font-size: 11.5px; }
+.dist-plot {
+  display: flex;
+  align-items: stretch; /* 必须 stretch：flex-end 会让 slot 高度塌成内容高度，柱子全成 0 */
+  gap: 2px;
+  height: 92px;
+  padding: 14px 0 0;
+  border-bottom: 1px solid var(--line);
+  /* 三道参考线，读数时有个基准 */
+  background-image: repeating-linear-gradient(
+    to top,
+    transparent 0,
+    transparent calc(33.3% - 1px),
+    var(--line-soft) calc(33.3% - 1px),
+    var(--line-soft) 33.3%
+  );
+}
+.dist-slot {
+  flex: 1 1 0;
+  min-width: 3px;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  align-items: center;
+  position: relative;
+  cursor: default;
+}
+.dist-slot > i {
+  display: block;
+  width: 100%;
+  max-width: 26px;
+  background: color-mix(in srgb, var(--fg) 24%, transparent);
+  border-radius: 2px 2px 0 0;
+  transition: background 120ms ease-out;
+}
+.dist-slot:hover > i { background: color-mix(in srgb, var(--fg) 44%, transparent); }
+.dist-slot.is-mine > i {
+  background: linear-gradient(180deg, var(--brand-lime-light), var(--brand-lime));
+}
+.dist-slot.is-empty > i { background: transparent; }
+.dist-num {
+  font-size: 9.5px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  margin-bottom: 2px;
+  line-height: 1;
+}
+.dist-slot.is-mine .dist-num { color: var(--accent); font-weight: 600; }
+.dist-axis {
+  position: relative;
+  display: flex;
+  justify-content: space-between;
+  font-size: 10.5px;
+  color: var(--faint);
+  font-variant-numeric: tabular-nums;
+  padding-top: 5px;
+}
+.dist-me {
+  position: absolute;
+  top: -3px;
+  transform: translateX(-50%);
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--accent);
+  background: var(--bg);
+  padding: 0 4px;
+}
+
+/* ---------------- 表单字段的三段式：标签 / 控件 / 说明 ----------------
+   原来是"标题 + 一排按钮 + 一大段灰字 + 复选框 + 按钮"全挤在一条流里，
+   读的时候要在一片文字里找控件。改成字段化：每项一行标签、一行控件、一行说明。 */
+.field { padding: 12px 0; border-top: 1px solid var(--line-soft); }
+.field:first-of-type { border-top: none; padding-top: 2px; }
+.field-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+  letter-spacing: .02em;
+  margin-bottom: 9px;
+}
+.field-hint {
+  margin: 8px 0 0;
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--muted);
+}
+.field .check { margin: 0; }
+
+.deep-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding-top: 14px;
+  border-top: 1px solid var(--line-soft);
+}
+.deep-actions .field-hint { margin: 0; }
+
+/* 判定方法折叠：需要时才展开，默认不占版面 */
+.deep-method {
+  margin-top: 12px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.deep-method > summary {
+  cursor: pointer;
+  list-style: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--muted);
+  padding: 3px 0;
+}
+.deep-method > summary::-webkit-details-marker { display: none; }
+.deep-method > summary::before {
+  content: "";
+  width: 0; height: 0;
+  border-left: 4px solid currentColor;
+  border-top: 3.5px solid transparent;
+  border-bottom: 3.5px solid transparent;
+  transition: transform 120ms ease-out;
+}
+.deep-method[open] > summary::before { transform: rotate(90deg); }
+.deep-method > summary:hover { color: var(--fg); }
+.deep-method ul { margin: 8px 0 0; padding-left: 16px; line-height: 1.65; }
+.deep-method li + li { margin-top: 4px; }

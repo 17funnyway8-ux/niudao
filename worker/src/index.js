@@ -60,14 +60,29 @@ const CORS = {
 
 /**
  * 服务端复核运行环境：不信客户端的自报值。
- * 旧版本客户端不会上报 env_type，被改过的客户端也可能谎报 physical；
- * 但 hardware.board / cpu_model 里的虚拟化字样是它自己交上来的，赖不掉。
+ *
+ * 三层判据（从严到宽）：
+ *  1. hardware 文本里的虚拟化特征（board / cpu_model / gpu）→ 虚拟机
+ *  2. 客户端上报的 hypervisor 标志位 → 虚拟机（云主机通常 DMI 被洗白，但标志位还在）
+ *  3. board 读不到 + 系统不是 fnOS → 容器/沙箱环境（真实的物理机一定有 DMI）
+ *
+ * 第 3 条是被一个真实案例逼出来的：instabox 沙箱容器里 board 全是空的，
+ * 前两层都判不出，结果一台沙箱容器混进了物理机榜。
  */
 function serverEnvOverride(hardware) {
   const hay = [hardware?.board, hardware?.cpu_model, hardware?.gpu, hardware?.os_version].filter(Boolean).join(" ");
   if (/qemu|kvm|proxmox|vmware|virtualbox|innotek|parallels|xen|hyper-?v|microsoft corporation|bochs|virtual machine/i.test(hay)) {
     return "vm";
   }
+  if (hardware?.hypervisorFlag === true) return "vm";
+  // board 为空 + 系统是别的发行版 / 沙箱内核：真实飞牛一定有自己的 DMI，
+  // 这条用来兜住"跑在容器/沙箱里"的情况（如 instabox 沙箱）。
+  // 注意不能简单写"os 不含 fnOS 就判容器" —— 飞牛的版本号字段在各版本里
+  // 格式不统一（有的只报 1.2.0800），那样会把真机误伤。
+  const board = String(hardware?.board || "").trim();
+  const osv = String(hardware?.osVersion || hardware?.os_version || "");
+  const foreignOs = /debian|ubuntu|centos|alpine|arch linux|fedora|instabox|openwrt|buildroot/i.test(osv);
+  if (!board && foreignOs) return "container";
   return null;
 }
 

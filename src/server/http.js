@@ -1038,9 +1038,20 @@ export async function shutdown({ timeoutMs = 8000 } = {}) {
  * 所以 CSP 可以收紧到 self，不需要 unsafe-inline —— 万一有人往渲染里塞了
  * 未转义的字符串，浏览器也不会执行。
  */
+/**
+ * 统一安全响应头。
+ *
+ * 注意 style-src 必须带 'unsafe-inline'：这个前端的布局大量使用 style="..." 内联属性
+ * （图表高度、间距、进度条宽度都是算出来的）。2.0 加 CSP 时漏了这一点，导致
+ * **所有内联样式失效** —— 界面看起来还在，但所有动态尺寸全变成 0，分布图柱子直接消失。
+ *
+ * 权衡：style 上的 inline 风险远低于 script（最多是样式注入，无法执行代码），
+ * 而且样式里不接受任何用户输入（都过 esc()）。script-src 依然是 'self'，
+ * XSS 执行仍被挡住 —— 那才是真正要防的。
+ */
 const SECURITY_HEADERS = {
   "content-security-policy":
-    "default-src 'self'; img-src 'self' data: blob:; style-src 'self'; script-src 'self'; connect-src 'self'; " +
+    "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; " +
     "object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'self'",
   "x-content-type-options": "nosniff",
   "referrer-policy": "no-referrer",

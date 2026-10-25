@@ -72,6 +72,11 @@ export function validateSubmission(input) {
   const rawEnv = str(input.env_type, 16).toLowerCase();
   const envType = ["physical", "vm", "container"].includes(rawEnv) ? rawEnv : "physical";
   const vmTech = cleanText(input.vm_tech, 40);
+  // 客户端上报的判定证据（服务端用来交叉验证，尤其在 board 读不到时）
+  const hypervisorFlag = input.hypervisor === true;
+  const envEvidence = Array.isArray(input.env_evidence)
+    ? input.env_evidence.slice(0, 6).map((e) => cleanText(e, 80)).filter(Boolean)
+    : [];
   if (!["x64", "arm64", "ia32", "arm"].includes(arch)) errors.push(`arch 不支持: ${arch || "(空)"}`);
 
   // hardware 里的自由文本会原样出现在公开榜单上，和别名走同一套清洗规则
@@ -101,7 +106,10 @@ export function validateSubmission(input) {
   if (hardware.threads < 1) errors.push("hardware.threads 必须 >= 1");
 
   // 依赖注入的复核函数（scoring 不引 hardware，避免循环依赖，由调用方传入判定）
-  const envOverride = typeof input.__envOverride === "function" ? input.__envOverride(hardware) : null;
+  const envOverride =
+    typeof input.__envOverride === "function"
+      ? input.__envOverride({ ...hardware, hypervisorFlag, osVersion: hardware.os_version })
+      : null;
   const finalEnv = envOverride || envType;
   if (hardware.mem_gb < 1) errors.push("hardware.mem_gb 必须 >= 1");
 

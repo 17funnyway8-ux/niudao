@@ -254,6 +254,9 @@ export async function submit(result, alias) {
     alias: alias ?? settings.alias,
     env_type: result.envInfo?.type || result.env?.type || "physical",
     vm_tech: result.envInfo?.tech || result.env?.tech || "",
+    // 判定证据一并发给服务端：board 读不到时（沙箱/容器），服务端靠这个交叉验证
+    env_evidence: (result.envInfo || result.env)?.evidence || [],
+    hypervisor: false,
     // 卷路径是用户自己的目录结构，公共榜上不需要，别带出去
     hardware: (() => {
       const { volume, ...rest } = result.hardware || {};
