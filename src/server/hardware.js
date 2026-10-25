@@ -373,9 +373,20 @@ function volumeKind(dev) {
 
 /**
  * 用户在飞牛「应用设置 → 访问权限」里授权的路径。
- * 这些是**用户显式允许应用读写**的目录（可能在某个卷的子目录里），
- * 比卷根更贴近他真正想测的盘，所以优先列出来。
- * 变量格式：TRIM_DATA_ACCESSIBLE_PATHS，`:` 分隔（技能文档确认的约定）。
+ *
+ * 两个前提必须说清楚（我为此走了两次弯路）：
+ *
+ * 1. **权限本身是文件系统 ACL，加完立刻生效**，不需要重启应用。
+ *    飞牛给应用运行用户在该目录上写 Windows ACL，所以 fs.access 会马上反映出来。
+ *    之前我在提示里让用户"重启应用再试"是错的。
+ *
+ * 2. **但"授权了哪些路径"是枚举不出来的**：卷根（如 /vol4）由 root 独占、
+ *    权限位是 d---------，普通应用连 ls 都做不到，更不可能遍历出被授权的子目录。
+ *    环境变量 TRIM_DATA_ACCESSIBLE_PATHS 只在**进程启动那一刻**注入，
+ *    用户后来加的目录不会出现在里面。
+ *
+ * 所以策略是：能探测的（卷根可写性、可读目录下的子目录）动态探测，
+ * 探测不到的靠"用户填过的路径记下来"（见 settings 的 recentTargetDirs）。
  */
 function authorizedPaths() {
   const raw = process.env.TRIM_DATA_ACCESSIBLE_PATHS || process.env.TRIM_DATA_SHARE_PATHS || "";
@@ -383,14 +394,44 @@ function authorizedPaths() {
   for (const p of raw.split(":")) {
     const dir = p.trim();
     if (!dir.startsWith("/")) continue;
-    // 只要目录还在就列出来。**不能要求可写**：卷根本身通常 root 拥有、应用只读，
-    // 但用户仍可能想看它；真正能不能写，在保存设置时用写探针校验。
     try {
       if (!fs.statSync(dir).isDirectory()) continue;
     } catch {
       continue; // 授权了但目录已被删
     }
     if (!out.includes(dir)) out.push(dir);
+  }
+  return out;
+}
+
+/** 目录是否可写（ACL 变了立刻能反映出来，不用重启） */
+function isWritable(dir) {
+  try {
+    fs.accessSync(dir, fs.constants.W_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * 在卷根下找"当前用户能进去、且能写"的一级子目录。
+ * 卷根可读时才有效（有的卷根对应用完全不可见，那就只能靠用户自己填路径）。
+ */
+function writableSubdirs(volumeRoot, limit = 12) {
+  const out = [];
+  let entries = [];
+  try {
+    entries = fs.readdirSync(volumeRoot, { withFileTypes: true });
+  } catch {
+    return out; // 卷根不可读：正常的，不是错误
+  }
+  for (const e of entries) {
+    if (out.length >= limit) break;
+    if (!e.isDirectory() || e.name.startsWith(".")) continue;
+    const full = path.join(volumeRoot, e.name);
+    if (!isWritable(full)) continue;
+    out.push(full);
   }
   return out;
 }
@@ -428,7 +469,39 @@ function volumes() {
       })(),
     });
   }
-  // ② 再补上各卷的根目录
+  // ② 卷根，以及卷根下当前用户可写的子目录。
+  //    用户给某个子目录授权后，这里会立刻多出可选项（ACL 即时生效）。
+  const scanned = new Set();
+  for (const m of mounts()) {
+    if (scanned.has(m.mount)) continue;
+    scanned.add(m.mount);
+    for (const sub of writableSubdirs(m.mount)) {
+      if (seen.has(sub)) continue;
+      let sizeGb = 0;
+      let freeGb = null;
+      try {
+        const st = fs.statfsSync(sub);
+        sizeGb = Math.round((st.blocks * st.bsize) / 1024 ** 3);
+        freeGb = Math.round((st.bavail * st.bsize) / 1024 ** 3);
+      } catch {
+        /* 忽略 */
+      }
+      seen.set(sub, {
+        mount: sub,
+        fstype: m.fstype,
+        size_gb: sizeGb,
+        free_gb: freeGb,
+        device: blockSysName(m.dev),
+        disks: physicalDisks(m.dev).length,
+        kind: volumeKind(m.dev),
+        authorized: true,
+        writable: true,
+        inVolume: m.mount,
+      });
+    }
+  }
+
+  // ③ 卷根本身
   for (const m of mounts()) {
     if (seen.has(m.mount)) continue;
     let sizeGb = 0;

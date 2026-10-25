@@ -46,6 +46,15 @@ export const DEFAULT_SETTINGS = {
   autoSubmit: true,
   diskSizeMb: 512,
   targetDir: TARGET_DIR,
+  /**
+   * 用户填成功过的测试目录。
+   *
+   * 为什么需要这个：飞牛给卷根（/vol4 等）的权限是 d---------（root 独占），
+   * 应用连 ls 都做不到，**枚举不出**用户后来授权的子目录；
+   * 环境变量 TRIM_DATA_ACCESSIBLE_PATHS 又只在进程启动时注入一次。
+   * 所以只能记住"用户填成功过的路径"，让他下次能直接选。
+   */
+  recentTargetDirs: [],
 };
 
 export function ensureDataDir() {

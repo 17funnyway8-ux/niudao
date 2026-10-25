@@ -1033,20 +1033,29 @@ function settingsView() {
             (() => {
               const cur = String(s.targetDir || "");
               const vols = (state.boot?.hardware?.volumes || []).filter((v) => v?.mount);
-              const has = vols.some((v) => v.mount === cur);
-              const mine = cur && !has ? `<option value="${esc(cur)}" label="当前：自定义路径"></option>` : "";
-              // 已授权的目录排前面：那才是用户真正想测的盘
+              const known = new Set(vols.map((v) => v.mount));
+              // ① 当前值（用户可能在列表里找不到它，得先列出来）
+              const mine = cur && !known.has(cur) ? `<option value="${esc(cur)}" label="当前使用中"></option>` : "";
+              // ② 以前填成功过的路径：授权子目录在卷根不可读时枚举不出来，只能靠记忆
+              const recents = (s.recentTargetDirs || [])
+                .filter((d) => d && d !== cur && !known.has(d))
+                .map((d) => `<option value="${esc(d)}" label="用过的路径"></option>`)
+                .join("");
+              // ③ 探测到的卷/可写目录：可写的排前面
               const sorted = [...vols].sort((a, b) => Number(Boolean(b.authorized)) - Number(Boolean(a.authorized)));
               return (
                 mine +
-                sorted
-                  .map((v) => `<option value="${esc(v.mount)}" label="${esc(volLabel(v))}"></option>`)
-                  .join("")
+                recents +
+                sorted.map((v) => `<option value="${esc(v.mount)}" label="${esc(volLabel(v))}"></option>`).join("")
               );
             })()
           }
         </datalist>
-        <span class="hint">可以直接输入任意<b>有写权限的路径</b>（如 <span class="mono">/vol4/1000/niudao benchmark</span>），下拉里列的是识别到的卷。</span>
+        <span class="hint">
+          可以直接输入任意<b>有写权限的路径</b>（如 <span class="mono">/vol4/1000/niudao benchmark</span>）。
+          在飞牛「应用设置 → 访问权限」里加好目录后<b>立即生效，不用重启应用</b>；
+          但卷根对应用不可读，我列不出你授权的子目录，所以填一次成功之后会记住它。
+        </span>
       </div>
       <div class="field">
         <label>顺序测试文件大小（MB）</label>

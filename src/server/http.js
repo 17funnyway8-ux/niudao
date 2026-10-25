@@ -812,8 +812,13 @@ function failTargetDir(res, settings, message) {
       patch.targetDir = dir;
     }
     const next = saveSettings(patch);
+    // 记住填成功过的目录：卷根不可读，应用无法枚举授权子目录，只能靠这条记忆
+    if (patch.targetDir) {
+      const recents = [patch.targetDir, ...(next.recentTargetDirs || []).filter((d) => d !== patch.targetDir)].slice(0, 6);
+      saveSettings({ recentTargetDirs: recents });
+    }
     hwCache = { at: 0, value: null };
-    return json(res, 200, next);
+    return json(res, 200, loadSettings());
   }
 
   if (pathname === "/api/results" && method === "GET") {
