@@ -8,10 +8,8 @@ if (!target) {
   process.exit(1);
 }
 
-const clean = (s) => String(s || "").replace(/[<>"'`\\/]/g, "").trim();
-const alias = clean(process.env.W_ALIAS).slice(0, 16);
-const rawUrl = String(process.env.W_LB || "").trim();
-const url = /^https?:\/\/\S+$/i.test(rawUrl) ? rawUrl : "";
+// 向导只问磁盘测试文件大小：花名固定用设备名、榜单地址随包写死，
+// 这两项不再由安装期写入（旧变量留在环境里也无害，但这里不再读）。
 const disk = Number(process.env.W_DISK) || 0;
 
 let current = {};
@@ -22,10 +20,8 @@ try {
 }
 
 const next = { ...current };
-if (alias) next.alias = alias;
-if (url) next.leaderboardUrl = url;
 if (disk >= 64 && disk <= 4096) next.diskSizeMb = disk;
 
 fs.mkdirSync(String(target).replace(/\/[^/]+$/, ""), { recursive: true });
 fs.writeFileSync(target, `${JSON.stringify(next, null, 2)}\n`);
-console.log(`settings.json 已初始化: alias=${next.alias || "(空)"} disk=${next.diskSizeMb || 512} leaderboard=${next.leaderboardUrl || "(未配置)"}`);
+console.log(`settings.json 已初始化: disk=${next.diskSizeMb || 512}`);

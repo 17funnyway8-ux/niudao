@@ -9,7 +9,7 @@ echo "牛刀数据目录: $DATA_DIR"
 NODE_BIN="/var/apps/nodejs_v22/target/bin/node"
 if [ -x "$NODE_BIN" ] && [ -f "${TRIM_APPDEST}/runtime/server/init-settings.js" ]; then
   # 用环境变量传参，避免把用户输入拼进 shell
-  W_ALIAS="${wizard_alias:-}" W_LB="${wizard_leaderboard:-}" W_DISK="${wizard_disk_mb:-}" \
+  W_DISK="${wizard_disk_mb:-}" \
     "$NODE_BIN" "${TRIM_APPDEST}/runtime/server/init-settings.js" "${DATA_DIR}/settings.json" \
     >> "${DATA_DIR}/install.log" 2>&1 || echo "初始化设置失败（不影响使用，可在应用内修改）"
 else
