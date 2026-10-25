@@ -1,5 +1,19 @@
 /**
- * 硬件指纹与环境快照。全部使用未特权可读的 /proc、/sys 路径，读不到就降级并记录 warning。
+ * 硬件指纹与环境快照。
+ *
+ * 数据来源原则（这个顺序别改）：
+ *  1. **飞牛系统自己的数据**：/usr/trim/etc/gpu_device_info.json（GPU 产品名）、
+ *     /usr/share/misc/pci.ids（PCI 厂商与设备名）—— 系统页面上显示的就是这些，
+ *     用它们才能和用户在飞牛"设备信息"里看到的一致。
+ *  2. **内核的权威接口**：/proc/cpuinfo、/sys/class/dmi/id/*（CPU 型号、内存容量、
+ *     主板型号）—— 系统自己也是从这些地方读的，不存在"映射表"问题。
+ *  3. **最后才兜底**（ARM 虚机上 /proc/cpuinfo 空的场景）：MIDR 寄存器。
+ *
+ * 反面教训：我给 GPU 手写过一张 20 条的 PCI ID 表，结果把 RTX A3000 认成了
+ * "RTX 2050 / MX570"，和系统显示对不上。凡是系统里已有现成数据，就别自己造。
+ *
+ * 注意：com.trim.sysinfo 的 RPC socket（/run/trim_app_cgi/sysinfo）只有
+ * OfficialAppUsers 组可读，第三方应用不在该组，所以走文件而不是 RPC。
  */
 import { createHash } from "node:crypto";
 import fs from "node:fs";
@@ -109,11 +123,30 @@ function osVersion() {
   return `${os.type()} ${os.release()}`;
 }
 
+/**
+ * 整机/主板型号。
+ * DMI 里有一堆厂商占位符（"Default string"、"To Be Filled By O.E.M." 等），
+ * 直接拼起来会得到 "Default string DS2501" 这种半截垃圾，必须先过滤。
+ * 优先用 board_vendor + board_name（主板），没有再退回 sys_vendor + product_name。
+ */
+const DMI_PLACEHOLDERS = /^(default string|to be filled by o\.e\.m\.?|system product name|system manufacturer|oem|none|unknown|not specified|n\/a|-+)$/i;
+
+function cleanDmi(v) {
+  const s = String(v || "").replace(/\u0000/g, "").trim();
+  return s && !DMI_PLACEHOLDERS.test(s) ? s : "";
+}
+
 function board() {
-  const vendor = readFirst("/sys/class/dmi/id/sys_vendor", "/sys/firmware/devicetree/base/model");
-  const product = readFirst("/sys/class/dmi/id/product_name", "/sys/class/dmi/id/board_name");
-  const parts = [vendor, product].filter(Boolean).map((s) => s.replace(/\u0000/g, "").trim());
-  return parts.length ? parts.join(" ") : "";
+  const candidates = [
+    [read("/sys/class/dmi/id/board_vendor"), read("/sys/class/dmi/id/board_name")],
+    [read("/sys/class/dmi/id/sys_vendor"), read("/sys/class/dmi/id/product_name")],
+    [read("/sys/firmware/devicetree/base/model"), null], // ARM 裸板
+  ];
+  for (const [v, n] of candidates) {
+    const parts = [cleanDmi(v), cleanDmi(n)].filter(Boolean);
+    if (parts.length) return parts.join(" ");
+  }
+  return "";
 }
 
 const PCI_VENDORS = { "0x8086": "Intel", "0x1002": "AMD", "0x10de": "NVIDIA", "0x1a03": "ASPEED", "0x5143": "Qualcomm" };
@@ -130,7 +163,9 @@ const PCI_VENDORS = { "0x8086": "Intel", "0x1002": "AMD", "0x10de": "NVIDIA", "0
  * 取不到精确子键时，任取一个（同 device 下的 name 基本一致）。
  */
 const FNOS_GPU_DB = "/usr/trim/etc/gpu_device_info.json";
+const PCI_IDS = "/usr/share/misc/pci.ids";
 let gpuDbCache = null;
+let pciIdsCache = null;
 
 function loadFnOsGpuDb() {
   if (gpuDbCache !== null) return gpuDbCache;
@@ -142,15 +177,66 @@ function loadFnOsGpuDb() {
   return gpuDbCache;
 }
 
-/** 在飞牛清单里查产品名。取不到返回空串（交给上层决定怎么退化）。 */
+/**
+ * 系统自带的 pci.ids（pciutils 的数据库，1.3 MB，2023-04 版）。
+ * 飞牛的 gpu_device_info.json 只收了它自己驱动支持范围内的卡，新卡可能没有；
+ * pci.ids 更全，作为第二来源，仍然属于"系统的现成数据"，不是我手写的表。
+ */
+function loadPciIds() {
+  if (pciIdsCache !== null) return pciIdsCache;
+  const db = { vendors: {}, devices: {} };
+  try {
+    let vendor = "";
+    for (const line of fs.readFileSync(PCI_IDS, "utf8").split("\n")) {
+      if (!line || line.startsWith("#")) continue;
+      if (!line.startsWith("\t")) {
+        const m = line.match(/^([0-9a-f]{4})\s+(.+)$/i);
+        if (m) vendor = m[1].toLowerCase(), (db.vendors[vendor] = m[2].trim());
+      } else if (line.startsWith("\t") && !line.startsWith("\t\t")) {
+        const m = line.match(/^\t([0-9a-f]{4})\s+(.+)$/i);
+        if (m && vendor) db.devices[`${vendor}:${m[1].toLowerCase()}`] = m[2].trim();
+      }
+    }
+  } catch {
+    /* 没有 pci.ids 就只用飞牛清单 */
+  }
+  pciIdsCache = db;
+  return db;
+}
+
+/**
+ * 显卡产品名。优先飞牛清单（和系统"设备信息"页显示一致），
+ * 其次系统 pci.ids，最后才退化为驱动可读名。查不到就不写，不编。
+ */
 export function gpuNameFromFnOS(vendorHex, deviceHex) {
+  const v = String(vendorHex || "").toLowerCase();
+  const d = String(deviceHex || "").toLowerCase();
+  if (!v || !d) return "";
+
+  // 1) 飞牛清单：{"10DE": {"24B8": {"0000": {"name": "RTX A3000 Laptop GPU"}}}}
   const db = loadFnOsGpuDb();
-  const vendor = db[vendorHex?.toUpperCase()] || db[vendorHex?.toLowerCase()];
-  if (!vendor) return "";
-  const dev = vendor[deviceHex?.toUpperCase()] || vendor[deviceHex?.toLowerCase()];
-  if (!dev) return "";
-  const first = dev["0000"] || dev["00"] || Object.values(dev)[0];
-  return (first && first.name) || "";
+  const vendor = db[v.toUpperCase()] || db[v];
+  const dev = vendor ? vendor[d.toUpperCase()] || vendor[d] : null;
+  if (dev) {
+    const first = dev["0000"] || dev["00"] || Object.values(dev)[0];
+    if (first?.name) return String(first.name).trim();
+  }
+
+  // 2) 系统 pci.ids（去掉 [代号] 后缀，只留产品名）
+  const pci = loadPciIds();
+  const hit = pci.devices[`${v}:${d}`];
+  if (hit) {
+    const clean = hit.replace(/\s*\[[^\]]*\]\s*$/, "").trim();
+    return clean || hit;
+  }
+  return "";
+}
+
+/** 厂商名也取自系统 pci.ids，不再手写映射 */
+function vendorName(vendorHex) {
+  const v = String(vendorHex || "").toLowerCase();
+  const pci = loadPciIds();
+  return pci.vendors[v] || "";
 }
 
 function gpu() {
@@ -188,8 +274,8 @@ function gpu() {
         vkms: "虚拟显卡（无头）",
         "radeon": "AMD 显卡（旧驱动）",
       }[driver];
-      const vendorName = PCI_VENDORS[`0x${vendorHex}`] || "";
-      label = driverLabel || (vendorName ? `${vendorName} 显卡` : "");
+      const vname = vendorName(vendorHex);
+      label = driverLabel || (vname ? `${vname} 显卡` : "");
     }
     if (!label) continue;
     // 同一张卡会有多个 DRM 节点（card0 / card0-DP-1 等），去重

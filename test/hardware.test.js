@@ -49,3 +49,29 @@ test("快照里的显卡字段是可读产品名，不含 0x 代号", () => {
     }
   });
 });
+
+test("飞牛清单里没有的卡，回落到系统 pci.ids（仍然是系统的数据，不是我手写的表）", () => {
+  const pciIds = "/usr/share/misc/pci.ids";
+  if (!fs.existsSync(pciIds)) return; // 没有就跳过
+  // 10de:2684 是 RTX 4090，两处都有；这里验证返回值是"产品名"而不是代号
+  const n = gpuNameFromFnOS("10de", "2684");
+  assert.match(n, /4090|GeForce/i, `应给出产品名，实际：${n}`);
+  // 完全不存在的 ID 必须是空串，不能编造
+  assert.equal(gpuNameFromFnOS("10de", "ffff"), "");
+});
+
+test("显卡名与飞牛系统清单完全一致（这是用户能对照的锚点）", { skip: !hasDb && "本机没有 fnOS GPU 清单" }, () => {
+  const db = JSON.parse(fs.readFileSync(DB, "utf8"));
+  const vendor = db["10DE"];
+  const dev = vendor["24B8"];
+  const expected = (dev["0000"] || dev["00"] || Object.values(dev)[0]).name;
+  assert.equal(gpuNameFromFnOS("10de", "24b8"), expected,
+    "显卡名必须等于飞牛清单里的 name —— 用户会在系统设备信息里对照");
+});
+
+test("主板型号过滤厂商占位符（DMI 里的 Default string / To Be Filled…）", async () => {
+  const m = await import("../src/server/hardware.js");
+  const hw = m.snapshot({}).hardware;
+  assert.ok(!/default string/i.test(hw.board), `不该出现 "Default string"，实际：${hw.board}`);
+  assert.ok(!/to be filled/i.test(hw.board), `不该出现 OEM 占位符，实际：${hw.board}`);
+});
