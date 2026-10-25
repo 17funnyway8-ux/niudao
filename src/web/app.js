@@ -1,6 +1,5 @@
 /* 牛刀前端：零框架、零依赖，全部视图用原生 DOM 拼装。 */
 import { bindChartHover, lineChart, roundBars } from "./js/chart.js";
-import { copyScoreCardImage, downloadScoreCardPng, downloadScoreCardSvg, scoreCardDataUrl } from "./card.js";
 import { openFeedback } from "./feedback.js";
 
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -47,7 +46,6 @@ const state = {
   verdict: null,
   verdictLoading: false,
   showMetrics: true,
-  showCard: false,
   run: null,
   poll: null,
   board: { dim: "overall", arch: "", cpuOnly: false, track: "physical", data: null, loading: false, error: null },
@@ -728,8 +726,7 @@ function resultView() {
         </div>
         <span class="spacer"></span>
         <div class="row" style="flex-wrap:wrap">
-          <button class="btn primary" data-action="download-card" data-id="${esc(r.id)}">保存成绩图</button>
-          <button class="btn ghost" data-action="submit-result" data-id="${esc(r.id)}">提交到天梯</button>
+          <button class="btn primary" data-action="submit-result" data-id="${esc(r.id)}">提交到天梯</button>
           <a class="btn ghost" href="api/results/${esc(r.id)}/report.md" target="_blank" rel="noreferrer">Markdown</a>
           <a class="btn ghost" href="api/results/${esc(r.id)}/export.json">JSON</a>
         </div>
@@ -741,7 +738,6 @@ function resultView() {
         <button class="btn ghost sm" data-action="go-home-deep">先改时长</button>
         <button class="btn ghost sm" data-action="feedback">这份成绩有问题？</button>
       </div>
-      ${state.showCard ? `<div class="card-preview"><img src="${scoreCardDataUrl(r)}" alt="牛刀成绩卡" /><div class="faint" style="font-size:12px;margin-top:8px">这张就是可以发群的图。保存 PNG 或复制后直接粘贴到微信 / QQ。</div></div>` : ""}
       <div class="divider"></div>
       ${verdictCard()}
       ${dims.map(([k, d]) => dimBlock(k, d, s.dims?.[k])).join("")}
@@ -1463,55 +1459,6 @@ document.addEventListener("click", async (ev) => {
     } catch (e) {
       toast(e.message, "err");
     }
-    return;
-  }
-  if (action === "download-card") {
-    try {
-      await downloadScoreCardPng(state.result);
-      toast("成绩图已保存，发群吧", "ok");
-    } catch (e) {
-      try {
-        downloadScoreCardSvg(state.result);
-        toast("PNG 导出受限，已改为保存 SVG（同样可以发）", "");
-      } catch {
-        toast("保存失败：" + e.message, "err");
-      }
-    }
-    return;
-  }
-  if (action === "copy-image") {
-    try {
-      await copyScoreCardImage(state.result);
-      toast("图片已复制，直接粘贴到微信 / QQ", "ok");
-    } catch (e) {
-      try {
-        await downloadScoreCardPng(state.result);
-        toast("当前环境不允许直接复制图片，已改为保存 PNG", "");
-      } catch {
-        toast("复制失败：" + e.message, "err");
-      }
-    }
-    return;
-  }
-  if (action === "copy-share") {
-    try {
-      const r = state.result;
-      const lines = [
-        `我的 NAS 跑分 ${Math.round(r.scores?.composite || 0)}（牛刀 ${r.grade?.grade || ""} 级）`,
-        `${r.hardware?.cpu_model || ""} / ${r.hardware?.mem_gb || "?"}GB`,
-        `CPU ${Math.round(r.scores?.dims?.cpu?.score || 0)} · 内存 ${Math.round(r.scores?.dims?.memory?.score || 0)} · 存储 ${Math.round(r.scores?.dims?.storage?.score || 0)}`,
-        "飞牛 NAS 性能体检，你也来跑一个？",
-      ];
-      await navigator.clipboard.writeText(lines.join("\n"));
-      toast("晒单文案已复制（配图用「保存成绩图」）", "ok");
-    } catch (e) {
-      toast("复制失败：" + e.message, "err");
-    }
-    return;
-  }
-  if (action === "toggle-card") {
-    state.showCard = !state.showCard;
-    render();
     return;
   }
   if (action === "copy-card") {

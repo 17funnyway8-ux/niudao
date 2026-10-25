@@ -17,7 +17,7 @@
 import { validateSubmission } from "../../src/shared/schema.js";
 import { handleFeedback } from "./feedback.js";
 import { SUITE_VERSION, computeScores, gradeOf } from "../../src/shared/scoring.js";
-import { baselines as baselinesFile, pageHtml } from "./assets.js";
+import { baselines as baselinesFile } from "./assets.js";
 import {
   bucketsOf,
   countOf,
@@ -92,10 +92,32 @@ const json = (body, status = 200) =>
     headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", ...CORS },
   });
 
-const html = () =>
-  new Response(pageHtml, {
-    headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-cache" },
-  });
+/**
+ * 根路径不再提供榜单网页。
+ *
+ * 之前这里渲染 leaderboard/public/index.html，结果全网有"两套天梯"：
+ * 应用内那套（赛道/架构/分布图/同型号）和这里这套（早期简易表格），
+ * 同一个问题两个答案，用户扫码看到的是过时界面。
+ * 现在只留 API，查看榜单统一走应用内 —— 一处维护，一处版本。
+ */
+const rootInfo = () =>
+  new Response(
+    JSON.stringify(
+      {
+        service: "niudao-leaderboard",
+        message: "牛刀天梯只提供 API。查看榜单请在飞牛 fnOS 中打开「牛刀」应用的天梯页。",
+        endpoints: {
+          leaderboard: "GET /api/v1/leaderboard?dim=overall&track=physical&arch=&limit=50",
+          health: "GET /api/v1/health",
+          submit: "POST /api/v1/submit",
+        },
+        docs: "https://mp.weixin.qq.com/mp/appmsgalbum?__biz=MzkyOTcwMzE0MQ==&action=getalbum&album_id=4707355291124957184",
+      },
+      null,
+      2,
+    ),
+    { headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", ...CORS } },
+  );
 
 export default {
   async fetch(request, env) {
@@ -115,7 +137,7 @@ export default {
       const entry = pathname.match(/^\/api\/v1\/entry\/([\w-]+)$/);
       if (entry && request.method === "DELETE") return await remove(entry[1], request, env);
       if (pathname.startsWith("/api/")) return json({ error: "接口不存在" }, 404);
-      return html();
+      return rootInfo();
     } catch (err) {
       return json({ error: String(err?.message || err) }, 500);
     }

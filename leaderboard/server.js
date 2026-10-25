@@ -105,20 +105,28 @@ function readBody(req, limit = 96 * 1024) {
 const clientIp = (req) =>
   (req.headers["x-forwarded-for"] || "").split(",")[0].trim() || req.socket.remoteAddress || "unknown";
 
-function servePublic(res, pathname) {
-  const file = pathname === "/" || pathname === "/index.html" ? "index.html" : "";
-  if (!file) {
-    res.writeHead(404, { "content-type": "text/plain; charset=utf-8" });
-    return res.end("not found");
-  }
-  try {
-    const buf = fs.readFileSync(path.join(HERE, "public", file));
-    res.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-cache" });
-    return res.end(buf);
-  } catch {
-    res.writeHead(500, { "content-type": "text/plain; charset=utf-8" });
-    return res.end("missing public/index.html");
-  }
+/**
+ * 根路径只回 API 说明，不渲染榜单网页。
+ * 和官方 Worker 保持一致：查看榜单统一走飞牛应用内的天梯，
+ * 免得同一个问题有两套界面、两个答案。
+ */
+function servePublic(res) {
+  res.writeHead(200, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
+  return res.end(
+    JSON.stringify(
+      {
+        service: "niudao-leaderboard (self-hosted)",
+        message: "牛刀天梯只提供 API。查看榜单请在飞牛 fnOS 中打开「牛刀」应用的天梯页。",
+        endpoints: {
+          leaderboard: "GET /api/v1/leaderboard?dim=overall&track=physical&arch=&limit=50",
+          health: "GET /api/v1/health",
+          submit: "POST /api/v1/submit",
+        },
+      },
+      null,
+      2,
+    ),
+  );
 }
 
 const server = http.createServer(async (req, res) => {
@@ -258,7 +266,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (pathname.startsWith("/api/")) return json(res, 404, { error: "接口不存在" });
-    return servePublic(res, pathname);
+    return servePublic(res);
   } catch (err) {
     return json(res, 500, { error: String(err?.message || err) });
   }

@@ -3,55 +3,105 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>牛刀天梯 · fnOS 性能排行</title>
+    <title>牛刀天梯 · fnOS Benchmark</title>
+    <meta name="description" content="飞牛 NAS 性能天梯：物理机与虚拟机分开排名，支持按架构、按维度查看。" />
     <style>
       :root {
         color-scheme: light dark;
-        --bg: #f6f6f3; --panel: #fff; --ink: #17181a; --muted: #5c636d; --faint: #8b9099;
-        --line: #d9d9d2; --line-soft: #e9e9e2; --accent: #1f5a94;
+        --brand-lime: #a1e243;
+        --brand-lime-light: #cef466;
+        --brand-ink: #0b0f14;
+        --bg: #f6f6f3;
+        --panel: #fff;
+        --panel-2: #f1f1ec;
+        --ink: #17181a;
+        --muted: #5c636d;
+        --faint: #8b9099;
+        --line: #dcdcd4;
+        --line-soft: #ebebe4;
+        --accent: #3f6e12;
+        --bad: #b4402a;
         --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
         --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
       }
       @media (prefers-color-scheme: dark) {
         :root {
-          --bg: #17181a; --panel: #1d1f22; --ink: #e6e6e3; --muted: #9ca1a8; --faint: #727880;
-          --line: #33363b; --line-soft: #26292d; --accent: #7fb0dc;
+          --bg: #0f1216;
+          --panel: #171b21;
+          --panel-2: #1d222a;
+          --ink: #e8eae6;
+          --muted: #9aa1a9;
+          --faint: #6d747c;
+          --line: #2b3138;
+          --line-soft: #232830;
+          --accent: var(--brand-lime);
+          --bad: #e2674b;
         }
       }
       * { box-sizing: border-box; }
-      body { margin: 0; background: var(--bg); color: var(--ink); font: 13.5px/1.55 var(--sans); }
-      .wrap { max-width: 940px; margin: 0 auto; padding: 28px 20px 64px; }
-      header { display: flex; align-items: baseline; gap: 12px; border-bottom: 1px solid var(--line); padding-bottom: 12px; }
-      h1 { font-size: 16px; margin: 0; letter-spacing: .04em; }
-      .sub { color: var(--faint); font-size: 12px; }
-      .bar { display: flex; gap: 4px; align-items: center; margin: 14px 0; flex-wrap: wrap; }
-      button, select {
+      body { margin: 0; background: var(--bg); color: var(--ink); font: 13.5px/1.6 var(--sans); -webkit-font-smoothing: antialiased; }
+      .wrap { max-width: 880px; margin: 0 auto; padding: 26px 18px 60px; }
+
+      header { display: flex; align-items: center; gap: 10px; padding-bottom: 14px; border-bottom: 1px solid var(--line); }
+      .logo { width: 30px; height: 30px; border-radius: 8px; background: var(--brand-lime); display: grid; place-items: center; flex: none; }
+      .brand { font-size: 15px; font-weight: 600; letter-spacing: .01em; line-height: 1.2; }
+      .brand small { display: block; font-size: 9.5px; letter-spacing: .16em; color: var(--muted); font-weight: 500; margin-top: 2px; }
+      header .meta { margin-left: auto; font-size: 11.5px; color: var(--muted); text-align: right; line-height: 1.5; }
+
+      .bar { display: flex; gap: 6px; align-items: center; margin: 16px 0 10px; flex-wrap: wrap; }
+      .bar .sep { width: 1px; height: 18px; background: var(--line); margin: 0 4px; }
+      button {
         background: var(--panel); color: var(--ink); border: 1px solid var(--line);
-        border-radius: 3px; padding: 4px 10px; font: inherit; font-size: 12.5px; cursor: pointer;
+        border-radius: 4px; padding: 5px 11px; font: inherit; font-size: 12.5px; cursor: pointer;
+        transition: background 100ms, border-color 100ms;
       }
+      button:hover { border-color: var(--muted); }
       button.on { background: var(--ink); border-color: var(--ink); color: var(--panel); font-weight: 600; }
-      table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+
+      .note { font-size: 11.5px; color: var(--muted); line-height: 1.7; background: var(--panel-2); border-radius: 5px; padding: 9px 12px; margin: 0 0 14px; }
+      .note b { color: var(--ink); font-weight: 600; }
+
+      table { width: 100%; border-collapse: collapse; font-size: 13px; }
       th {
         text-align: left; font-weight: 500; font-size: 10.5px; letter-spacing: .1em;
-        text-transform: uppercase; color: var(--faint); padding: 6px 8px;
-        border-bottom: 1px solid var(--line); white-space: nowrap;
+        text-transform: uppercase; color: var(--faint); padding: 8px; border-bottom: 1px solid var(--line); white-space: nowrap;
       }
-      td { padding: 7px 8px; border-bottom: 1px solid var(--line-soft); }
-      td.n { text-align: right; font-family: var(--mono); font-variant-numeric: tabular-nums; }
-      .rank { font-family: var(--mono); color: var(--faint); width: 44px; }
-      .rank.top { color: var(--ink); font-weight: 600; }
-      .cpu { color: var(--faint); font-size: 11.5px; }
-      .empty { color: var(--faint); text-align: center; padding: 40px 0; }
-      .foot { margin-top: 20px; padding-top: 12px; border-top: 1px solid var(--line); color: var(--faint); font-size: 11.5px; line-height: 1.8; }
-      .tag { border: 1px solid var(--line); border-radius: 2px; padding: 0 4px; font-size: 10.5px; color: var(--muted); }
-      a { color: var(--accent); }
+      td { padding: 10px 8px; border-bottom: 1px solid var(--line-soft); vertical-align: top; }
+      td.n { text-align: right; font-family: var(--mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
+      .rank { font-family: var(--mono); color: var(--faint); width: 40px; }
+      .rank.top { color: var(--ink); font-weight: 700; }
+      .alias { font-weight: 600; }
+      .hw { color: var(--muted); font-size: 11.5px; margin-top: 2px; }
+      .tag { display: inline-block; border: 1px solid var(--line); border-radius: 3px; padding: 0 4px; font-size: 10px; color: var(--muted); margin-left: 5px; vertical-align: 1px; }
+      .tag.vm { border-color: var(--bad); color: var(--bad); }
+      .score { font-weight: 600; }
+      .score-sub { font-family: var(--mono); font-size: 11px; color: var(--faint); }
+
+      .empty { color: var(--muted); text-align: center; padding: 48px 0; font-size: 13px; }
+      .empty b { display: block; font-size: 14px; color: var(--ink); margin-bottom: 6px; }
+
+      footer { margin-top: 26px; padding-top: 14px; border-top: 1px solid var(--line); color: var(--faint); font-size: 11.5px; line-height: 1.85; }
+      footer a { color: var(--accent); text-decoration: none; }
+      footer a:hover { text-decoration: underline; }
+      .cta { display: inline-block; margin-top: 10px; padding: 7px 14px; border-radius: 5px; background: var(--brand-lime); color: var(--brand-ink); font-weight: 600; font-size: 12.5px; }
+      @media (max-width: 560px) {
+        .wrap { padding: 18px 12px 48px; }
+        th:nth-child(4), td:nth-child(4) { display: none; }
+        header .meta { display: none; }
+      }
     </style>
   </head>
   <body>
     <div class="wrap">
       <header>
-        <h1>牛刀天梯</h1>
-        <span class="sub" id="meta">载入中…</span>
+        <div class="logo" aria-hidden="true">
+          <svg width="20" height="20" viewBox="0 0 32 32" fill="none">
+            <path d="M4 22 L11 11 L16 18 L21 9 L28 22" stroke="#0b0f14" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round" />
+            <circle cx="24.6" cy="9.4" r="2.6" fill="#0b0f14" />
+          </svg>
+        </div>
+        <div class="brand">牛刀天梯<small>FNOS BENCHMARK</small></div>
+        <div class="meta" id="meta">载入中…</div>
       </header>
 
       <div class="bar">
@@ -59,73 +109,112 @@
         <button data-dim="cpu">CPU</button>
         <button data-dim="memory">内存</button>
         <button data-dim="storage">存储</button>
-        <select id="arch" aria-label="架构">
-          <option value="">全部架构</option>
-          <option value="x64">x86_64</option>
-          <option value="arm64">ARM64</option>
-        </select>
-        <button id="refresh">刷新</button>
+        <span class="sep"></span>
+        <button data-track="physical" class="on">物理机</button>
+        <button data-track="vm">虚拟机</button>
+        <span class="sep"></span>
+        <button data-arch="">全部架构</button>
+        <button data-arch="x64">x86_64</button>
+        <button data-arch="arm64">ARM64</button>
       </div>
 
+      <p class="note">
+        <b>物理机与虚拟机分开排名</b>：虚拟机的 CPU、内存、磁盘都来自宿主机，磁盘还常被页缓存放大，混在一起比没有意义。<br />
+        <b>跨架构不直接可比</b>：ARM 与 x86 的指令集、内存模型、磁盘栈都不同，整体榜放着只是为了热闹，真正有意义的是同一架构内、同一型号 CPU 之间的比较。
+      </p>
+
       <table>
-        <thead><tr><th class="rank">#</th><th>机器</th><th class="n">分数</th><th class="n">综合</th></tr></thead>
+        <thead>
+          <tr><th class="rank">#</th><th>机器</th><th class="n">分数</th><th class="n">综合</th></tr>
+        </thead>
         <tbody id="rows"><tr><td colspan="4" class="empty">载入中…</td></tr></tbody>
       </table>
 
-      <div class="foot" id="foot">
-        分数由服务端依据原始指标重算，客户端无法直接提交分数；同一台机器（硬件指纹）只保留最好成绩；跨套件版本不混榜。
-        样本不足 30 台时不显示百分位。<br />
-        想上榜：在飞牛 fnOS 安装「牛刀」，设置里填入本服务地址，跑一次体检即可。
-      </div>
+      <footer id="foot">
+        分数由服务端依据原始指标重算，客户端无法直接提交分数；同一台机器（硬件指纹）只保留最好成绩；跨套件版本不混榜。<br />
+        样本不足 30 台时不显示百分位。
+        <br />
+        <a class="cta" href="https://fnbench.1133891.xyz/" id="cta" style="display:none"></a>
+        <div style="margin-top:12px">想看自己 NAS 跑多少分？在飞牛 fnOS 应用中心安装「牛刀」，点一下，四十秒出结果。</div>
+      </footer>
     </div>
 
     <script>
-      const state = { dim: "overall", arch: "" };
+      const state = { dim: "overall", track: "physical", arch: "" };
       const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
       const num = (n) => (typeof n === "number" && isFinite(n) ? n.toLocaleString("zh-CN") : "—");
 
+      function bindGroup(attr, key) {
+        document.querySelectorAll(`[data-${attr}]`).forEach((b) =>
+          b.addEventListener("click", () => {
+            state[key] = b.dataset[attr];
+            document.querySelectorAll(`[data-${attr}]`).forEach((x) => x.classList.toggle("on", x === b));
+            load();
+          }),
+        );
+      }
+      bindGroup("dim", "dim");
+      bindGroup("track", "track");
+      bindGroup("arch", "arch");
+
       async function load() {
-        const q = new URLSearchParams({ dim: state.dim, limit: "100" });
+        const q = new URLSearchParams({ dim: state.dim, limit: "100", track: state.track });
         if (state.arch) q.set("arch", state.arch);
         const rows = document.getElementById("rows");
+        const meta = document.getElementById("meta");
         try {
           const res = await fetch(`/api/v1/leaderboard?${q}`);
           const data = await res.json();
+          if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
           const stats = data.stats || {};
-          document.getElementById("meta").textContent =
-            `${num(data.total)} 台机器 · 套件 v${data.suite || "-"}` + (stats.gated ? ` · 样本不足 ${num(stats.n)}/30` : "");
-          if (!data.entries?.length) {
-            rows.innerHTML = `<tr><td colspan="4" class="empty">榜上还没有机器。</td></tr>`;
+          const trackLabel = state.track === "vm" ? "虚拟机" : "物理机";
+          meta.innerHTML = `${num(data.total)} 台 · ${trackLabel} · 套件 v${esc(data.suite || "-")}` +
+            (stats.gated ? `<br/>样本不足 ${num(stats.n)}/30，暂不给百分位` : "");
+
+          if (!data.entries || !data.entries.length) {
+            rows.innerHTML = `<tr><td colspan="4" class="empty"><b>这个赛道还没有机器</b>装好牛刀跑一次，你就是第一个。</td></tr>`;
             return;
           }
           rows.innerHTML = data.entries
-            .map(
-              (e) => `<tr>
+            .map((e) => {
+              const hw = e.hardware || {};
+              const isVm = e.envType && e.envType !== "physical";
+              const tag = isVm ? `<span class="tag vm">${esc(e.vmTech || (e.envType === "container" ? "容器" : "虚拟机"))}</span>` : "";
+              const spec = [esc(hw.cpu_model || ""), hw.mem_gb ? `${hw.mem_gb}GB` : "", esc(e.arch || "")]
+                .filter(Boolean)
+                .join(" · ");
+              return `<tr>
                 <td class="rank ${e.rank <= 3 ? "top" : ""}">${e.rank}</td>
                 <td>
-                  <div>${esc(e.alias || e.hardware?.cpu_model || "匿名机器")}</div>
-                  <div class="cpu">${esc(e.hardware?.cpu_model || "")}${e.hardware?.mem_gb ? " · " + e.hardware.mem_gb + "GB" : ""} <span class="tag">${esc(e.arch)}</span></div>
+                  <div class="alias">${esc(e.alias || hw.cpu_model || "匿名机器")}${tag}</div>
+                  <div class="hw">${spec}</div>
                 </td>
-                <td class="n">${num(e.value)}</td>
-                <td class="n" style="color:var(--faint)">${num(e.composite)}</td>
-              </tr>`,
-            )
+                <td class="n score">${num(e.value)}</td>
+                <td class="n score-sub">${num(e.composite)}</td>
+              </tr>`;
+            })
             .join("");
         } catch (err) {
-          rows.innerHTML = `<tr><td colspan="4" class="empty">加载失败：${esc(err.message)}</td></tr>`;
+          meta.textContent = "载入失败";
+          rows.innerHTML = `<tr><td colspan="4" class="empty"><b>连不上榜单服务</b>${esc(err.message)}</td></tr>`;
         }
       }
-
-      document.querySelectorAll("[data-dim]").forEach((b) =>
-        b.addEventListener("click", () => {
-          state.dim = b.dataset.dim;
-          document.querySelectorAll("[data-dim]").forEach((x) => x.classList.toggle("on", x === b));
-          load();
-        }),
-      );
-      document.getElementById("arch").addEventListener("change", (e) => { state.arch = e.target.value; load(); });
-      document.getElementById("refresh").addEventListener("click", load);
       load();
+    </script>
+    <script>
+      // 从成绩卡扫码进来的人，看到的就是这个页面 —— 给他一个"我也测一次"的落点
+      (function () {
+        try {
+          const p = new URLSearchParams(location.search);
+          const from = p.get("from");
+          const cta = document.getElementById("cta");
+          if (from === "card" && cta) {
+            cta.textContent = "看你自己的 NAS 能跑多少分";
+            cta.href = "https://fnbench.1133891.xyz/";
+            cta.style.display = "inline-block";
+          }
+        } catch {}
+      })();
     </script>
   </body>
 </html>

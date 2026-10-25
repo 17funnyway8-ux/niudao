@@ -7,11 +7,16 @@
  */
 import qrcode from "./vendor-qrcode.js";
 
-/** 天梯页的公开地址（卡片右下角的二维码指向这里，别人扫了就能看到榜） */
+/**
+ * 天梯页的公开地址（卡片右下角的二维码指向这里，别人扫了就能看到榜）。
+ *
+ * 带 ?from=card：扫码的人是从一张成绩卡进来的，落地页据此给他
+ * "我也测一次"的行动入口。不带这个参数时就是纯榜单浏览。
+ */
 export function boardUrl(result) {
   const configured = (result?._leaderboardUrl || "").trim();
-  if (configured) return configured.replace(/\/+$/, "") + "/";
-  return "https://fnbench.1133891.xyz/";
+  if (configured) return configured.replace(/\/+$/, "") + "/?from=card";
+  return "https://fnbench.1133891.xyz/?from=card";
 }
 
 function escapeXml(s) {
@@ -59,7 +64,7 @@ export function scoreCardSvg(result, { leaderboardUrl = "" } = {}) {
   const gradeLabel = result.grade?.label || "";
   const date = new Date(result.ts || Date.now());
   const dateStr = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
-  const url = leaderboardUrl ? leaderboardUrl.replace(/\/+$/, "") + "/" : boardUrl(result);
+  const url = leaderboardUrl ? `${leaderboardUrl.replace(/\/+$/, "")}/?from=card` : boardUrl(result);
   const cpu = String(hw.cpu_model || "未知 CPU");
   const cpuShort = cpu.length > 44 ? cpu.slice(0, 43) + "…" : cpu;
   const mem = hw.mem_gb ? `${hw.mem_gb} GB` : "";

@@ -216,11 +216,21 @@ test("CORS 预检与未知接口", async () => {
   assert.equal((await jsonBody(await call(env, "/api/nope"))).status, 404);
 });
 
-test("assets.js 与源文件保持一致（防止页面/基准漂移）", async () => {
-  const page = fs.readFileSync(new URL("../../leaderboard/public/index.html", import.meta.url), "utf8");
-  assert.equal((await import("../src/assets.js")).pageHtml, page, "改完页面请跑 node worker/scripts/sync-assets.mjs");
+test("assets.js 与基准源文件保持一致（防止分数口径漂移）", async () => {
   const baselinesFile = JSON.parse(fs.readFileSync(new URL("../../leaderboard/baselines.json", import.meta.url), "utf8"));
   assert.deepEqual((await import("../src/assets.js")).baselines, baselinesFile);
+});
+
+test("根路径不再提供榜单网页：只回 API 说明，避免出现第二套天梯", async () => {
+  const env = freshEnv();
+  const res = await call(env, "/");
+  assert.equal(res.status, 200);
+  assert.match(res.headers.get("content-type") || "", /application\/json/);
+  const body = await res.json();
+  assert.match(body.message, /应用内|牛刀/, "要告诉访客去哪里看榜");
+  assert.ok(body.endpoints?.leaderboard, "要给出 API 入口");
+  // 绝不能把 HTML 页面吐回去 —— 那正是"两套天梯"的来源
+  assert.equal((await import("../src/assets.js")).pageHtml, undefined);
 });
 
 test("同型号筛选：D1 json_extract 精确匹配，且不筛选时仍是全榜", async () => {
