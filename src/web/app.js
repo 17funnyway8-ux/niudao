@@ -172,14 +172,20 @@ function coreHint(r) {
 function clockHint(r) {
   const c = r?.detail?.cpuClock;
   if (!c || !c.available) return "";
-  return ` · 均频 ${num(c.avgMhz)}MHz`;
+  if (Number.isFinite(c.singlePeakMhz)) return ` · 单核峰值 ${num(c.singlePeakMhz)}MHz`;
+  return Number.isFinite(c.maxMhz) ? ` · 峰值 ${num(c.maxMhz)}MHz` : "";
 }
 
 function clockCell(r) {
   const c = r?.detail?.cpuClock;
   if (!c || !c.available) return `<span class="faint">未读到这里</span>`;
-  const sustained = Number.isFinite(c.sustainedPct) ? `，稳态 ${c.sustainedPct}%` : "";
-  return `<span class="mono">${num(c.avgMhz)}</span> <span class="faint">MHz 平均（峰值 ${num(c.maxMhz)}${sustained}）</span>`;
+  // 单核看峰值、全核看平均 —— 混在一起报会让人以为"单核频率上不去"
+  const parts = [];
+  if (Number.isFinite(c.singlePeakMhz)) parts.push(`单核 <span class="mono">${num(c.singlePeakMhz)}</span> MHz`);
+  if (Number.isFinite(c.allCoreAvgMhz)) parts.push(`全核 <span class="mono">${num(c.allCoreAvgMhz)}</span> MHz`);
+  if (!parts.length && Number.isFinite(c.maxMhz)) parts.push(`峰值 <span class="mono">${num(c.maxMhz)}</span> MHz`);
+  const tail = Number.isFinite(c.sustainedPct) && c.sustainedPct < 95 ? ` <span class="faint">（全核为峰值的 ${c.sustainedPct}%）</span>` : "";
+  return parts.join(" · ") + tail;
 }
 
 const VERDICT_TONE = { good: "good", ok: "warn", warn: "warn", bad: "bad", unknown: "" };
@@ -313,7 +319,7 @@ function homeView() {
           </div>
           <span class="spacer"></span>
           <div class="row">
-            <button class="btn primary" data-action="start-run">${last ? "重新测量" : "开始体检"}</button>
+            <button class="btn primary" data-action="start-run" title="${last ? "再测一次，只保留最好成绩" : "约 40 秒出一份完整体检"}">${last ? "再试牛刀" : "小试牛刀"}</button>
             ${last ? `<button class="btn" data-action="open-result" data-id="${esc(last.id)}">打开报告</button>` : ""}
           </div>
         </div>
@@ -374,7 +380,7 @@ function homeView() {
       <div class="divider"></div>
       <div class="section-title">基准</div>
       <div class="faint" style="font-size:12px">
-        1000 分 = ${esc(base.machine?.cpu_model || "基准机")}（${esc(base.machine?.threads || "?")} 线程）
+        1000 分 = ${esc(base.machine?.cpu_model || "基准机")}（${esc(base.machine?.threads || "?")} 线程${base.machine?.boost === "off" ? "，睿频关闭" : ""}）
         ${base.measured_at ? ` · ${new Date(base.measured_at).toLocaleDateString("zh-CN")}` : ""}
       </div>
     </div>`;
@@ -429,7 +435,7 @@ function homeView() {
       </div>
 
       <div class="deep-actions">
-        <button class="btn ${deepRunning ? "" : "primary"}" data-action="start-deep" ${deepRunning ? "disabled" : ""}>开始深度体检</button>
+        <button class="btn ${deepRunning ? "" : "primary"}" data-action="start-deep" ${deepRunning ? "disabled" : ""} title="满载运行，看长时间跑下来还剩多少性能">大试牛刀</button>
         <span class="field-hint">将满载 ${state.deep.durationSec / 60} 分钟，建议在没人使用 NAS 的时候跑</span>
       </div>
 
@@ -943,11 +949,7 @@ function settingsView() {
       <div class="field">
         <div class="field-label">榜单显示名</div>
         <div class="alias-fixed">${esc(s.alias || state.boot?.hostname || "（读取中）")}</div>
-        <p class="field-hint">
-          固定使用本机的设备名称（安装时自动读取），不提供自定义。
-          展示名会公开在天梯榜上，交给用户随意填写会带来审核与法律风险。
-          想改名请去飞牛「设备信息」改设备名。
-        </p>
+        <p class="field-hint">固定使用本机的设备名称（安装时自动读取），不提供自定义。</p>
       </div>
 
       <div class="field">
@@ -1004,7 +1006,11 @@ function settingsView() {
       <div class="card-head"><h2>关于</h2></div>
       <dl class="kv">
         <dt>版本</dt><dd class="mono">v${esc(state.boot?.client || "—")} · 套件 v${esc(state.boot?.suite || "—")}</dd>
-        <dt>基准机</dt><dd>${esc(state.boot?.baseline?.machine?.cpu_model || "—")}</dd>
+        <dt>基准机</dt><dd>${esc(state.boot?.baseline?.machine?.cpu_model || "—")}${
+          state.boot?.baseline?.machine?.boost === "off"
+            ? ` <span class="faint">（睿频关闭，${esc(state.boot?.baseline?.machine?.freq_mhz || 2000)} MHz）</span>`
+            : ""
+        }</dd>
         <dt>数据</dt><dd class="faint">本机成绩存在应用数据目录（results.jsonl），删除应用前先导出。</dd>
       </dl>
       <div class="divider"></div>
@@ -1089,7 +1095,7 @@ async function startRun() {
     state.fast.liveSeries = [];
     await api("/api/run", { method: "POST", body: JSON.stringify({}) });
     state.view = "home";
-    toast("开始体检，约 40 秒");
+    toast("小试牛刀，约 40 秒出结果");
     render();
     pollRun();
   } catch (e) {
@@ -1110,7 +1116,7 @@ async function startDeep() {
     });
     state.deep.liveSeries = [];
     state.view = "home";
-    toast(`开始深度体检，满载 ${Math.round(state.deep.durationSec / 60)} 分钟`);
+    toast(`大试牛刀，满载 ${Math.round(state.deep.durationSec / 60)} 分钟，别走开`);
     render();
     pollRun();
   } catch (e) {

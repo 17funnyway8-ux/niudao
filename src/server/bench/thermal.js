@@ -111,22 +111,38 @@ export function sample(t = 0) {
     if (cat === "cpu" && (cpuMax === null || c > cpuMax)) cpuMax = c;
   }
 
+  // 频率：**平均值和最高值都要采**。
+  //
+  // 只取平均会造成严重误读：单核测试时只有 1 个核在跑（比如 4.5 GHz），
+  // 其余 15 个核空闲降频到 1.4 GHz，平均下来只有 1.6 GHz —— 用户看到会以为
+  // "单核没跑满、CPU 频率上不去"，其实是统计口径错了，不是 CPU 的问题。
   let freqMhz = null;
+  let freqMaxMhz = null;
   if (d.freqFiles.length) {
     let sum = 0;
     let n = 0;
+    let peak = 0;
     for (const f of d.freqFiles) {
       const v = Number(read(f));
       if (Number.isFinite(v) && v > 0) {
         sum += v;
         n += 1;
+        if (v > peak) peak = v;
       }
     }
-    if (n) freqMhz = Math.round(sum / n / 1000);
+    if (n) {
+      freqMhz = Math.round(sum / n / 1000);
+      freqMaxMhz = Math.round(peak / 1000);
+    }
   }
   if (freqMhz === null && d.freqAvgFile) {
     const v = Number(read(d.freqAvgFile));
-    if (Number.isFinite(v) && v > 0) freqMhz = Math.round(v / 1000);
+    if (Number.isFinite(v) && v > 0) {
+      freqMhz = Math.round(v / 1000);
+      // 平均值文件拿不到单核峰值，就用最大值文件兜底
+      const m = Number(read("/sys/devices/system/cpu/cpu0/cpufreq/scaling_max_freq"));
+      if (Number.isFinite(m) && m > 0) freqMaxMhz = Math.round(m / 1000);
+    }
   }
 
   let fanRpm = null;
@@ -146,6 +162,7 @@ export function sample(t = 0) {
     nvmeC: temps.nvme,
     boardC: temps.board,
     freqMhz,
+    freqMaxMhz,
     fanRpm,
   };
 }

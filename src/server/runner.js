@@ -5,7 +5,7 @@
 import { cpuMulti, cpuSingle, scalingEfficiency } from "./bench/cpu.js";
 import { runBenchJob } from "./bench/offload.js";
 import { diskRandom, diskSeq, prepareDir } from "./bench/disk.js";
-import { startSampler } from "./bench/thermal.js";
+import { discover as discoverSensors, startSampler } from "./bench/thermal.js";
 
 export const STAGES = [
   { key: "cpu_single", label: "CPU 单核", hint: "让一个核心跑满，看你点开应用的响应速度" },
@@ -47,11 +47,15 @@ export async function runSuite({ targetDir, onEvent = () => {}, opts = {} }) {
 
   // 实时数值流：跑分时不让用户只看一根进度条。CPU 吞吐、磁盘速率、温度每秒上报一次。
   const live = (payload) => emit({ type: "live", ...payload });
-  // 每秒采样：既给界面看实时温度，也攒下来算"测试期间 CPU 实际频率"
+  // 每秒采样：既给界面看实时温度，也攒下来算"CPU 实际工作频率"。
+  // 必须按阶段打标：磁盘/内存阶段 CPU 基本空闲，把它们混进去会把平均频率拉低。
   const cpuFreqSamples = [];
+  let currentStage = null;
   const sampler = startSampler((s) => {
     live({ temp: s });
-    if (Number.isFinite(s?.freqMhz) && s.freqMhz > 0) cpuFreqSamples.push({ t: s.t, mhz: s.freqMhz });
+    if (Number.isFinite(s?.freqMhz) && s.freqMhz > 0) {
+      cpuFreqSamples.push({ t: s.t, stage: currentStage, avg: s.freqMhz, max: s.freqMaxMhz });
+    }
   }, 1000);
   // 让 UI 在每个阶段开始时清掉上一阶段的实时数字（避免磁盘速率还挂在 CPU 阶段上）
   live({ stage: null });
@@ -59,6 +63,7 @@ export async function runSuite({ targetDir, onEvent = () => {}, opts = {} }) {
   const step = async (index, fn) => {
     if (opts.shouldStop?.()) return null;
     const stage = STAGES[index];
+    currentStage = stage.key;
     live({ stage: stage.key });
     emit({ type: "stage", stage: stage.key, label: stage.label, index, status: "start" });
     const started = Date.now();
@@ -137,26 +142,70 @@ export async function runSuite({ targetDir, onEvent = () => {}, opts = {} }) {
   });
 
   sampler.stop();
-  // 测试期间的工作频率 —— 同型号 CPU 开不开睿频，分数差得很多，
-  // 不记录频率的话，看到"同一颗 CPU 差 30%"根本没法解释。
+  // 测试期间的工作频率 —— 同型号 CPU 开不开睿频，分数差得很多。
+  //
+  // 这里有个**必须区分口径**的地方，不区分会得出完全错误的结论：
+  //  · 单核阶段只有 1 个核在跑，其余核空闲降频。取所有核的平均，会得到
+  //    "4.5 GHz 的核 + 15 个 1.4 GHz 的空闲核" → 平均 1.6 GHz，
+  //    看起来像"单核跑不满"。所以单核阶段必须看**峰值**。
+  //  · 全核阶段所有核都在跑，平均才有意义，峰值则反映散热余量。
+  const byStage = (keys) => cpuFreqSamples.filter((x) => keys.includes(x.stage));
+  const stat = (rows, field) => {
+    const vals = rows.map((x) => x[field]).filter((v) => Number.isFinite(v) && v > 0);
+    if (!vals.length) return null;
+    const sorted = [...vals].sort((a, b) => a - b);
+    return {
+      avg: Math.round(vals.reduce((a, b) => a + b, 0) / vals.length),
+      max: Math.max(...vals),
+      min: Math.min(...vals),
+      p95: sorted[Math.min(sorted.length - 1, Math.floor(0.95 * sorted.length))],
+      samples: vals.length,
+    };
+  };
+
   detail.cpuClock = (() => {
-    const freq = cpuFreqSamples.map((x) => x.mhz).filter((x) => x > 0);
-    if (!freq.length) return { available: false, reason: "这台机器读不到 CPU 频率（缺 cpufreq 或权限）" };
-    const sorted = [...freq].sort((a, b) => a - b);
-    const pct = (p) => sorted[Math.min(sorted.length - 1, Math.floor((p / 100) * sorted.length))];
-    const avg = Math.round(freq.reduce((a, b) => a + b, 0) / freq.length);
-    const max = Math.max(...freq);
+    if (!cpuFreqSamples.length) return { available: false, reason: "这台机器读不到 CPU 频率（缺 cpufreq 或权限）" };
+    // 内核报告的最高频率（硬件能力）。实测峰值明显低于它，说明睿频没生效。
+    const nominalMhz = discoverSensors()?.maxFreqMhz || null;
+    const single = byStage(["cpu_single"]).length ? byStage(["cpu_single"]) : byStage(["cpu_single", "cpu_multi"]);
+    const multi = byStage(["cpu_multi"]);
+    const singlePeak = stat(single, "max");
+    const multiStat = stat(multi, "avg");
+    const multiPeak = stat(multi, "max");
+    const whole = stat(cpuFreqSamples, "max");
+
     return {
       available: true,
-      avgMhz: avg,
-      maxMhz: max,
-      p95Mhz: pct(95),
-      minMhz: Math.min(...freq),
-      samples: freq.length,
-      // 峰值稳态比：越高说明越接近"全核满频"
-      sustainedPct: max > 0 ? Math.round((avg / max) * 1000) / 10 : null,
+      /** 单核阶段：只有一两个核在跑，峰值才是真实工作频率 */
+      singlePeakMhz: singlePeak?.p95 ?? null,
+      /** 全核阶段：所有核都满载，平均频率才有意义 */
+      allCoreAvgMhz: multiStat?.avg ?? null,
+      allCorePeakMhz: multiPeak?.p95 ?? null,
+      /** 全程最高频（任何时刻任何核到达过的最大值） */
+      maxMhz: whole?.max ?? null,
+      samples: cpuFreqSamples.length,
+      /** 内核报告的最高频率（cpuinfo_max_freq），代表硬件能力 */
+      nominalMaxMhz: nominalMhz,
+      // 全核平均值 ÷ 全程峰值 = 多核负载下能维持多少"实测峰值"，反映散热/功耗墙
+      sustainedPct: multiStat?.avg && whole?.max ? Math.round((multiStat.avg / whole.max) * 1000) / 10 : null,
+      /**
+       * 睿频是否生效：实测峰值明显低于硬件标称最高频 → 睿频没上来。
+       * 常见原因：BIOS 关闭 Turbo/Boost、功耗墙（PL1/PL2）设得低、温度墙、省电策略。
+       * 这会让分数明显低于同款 CPU 的机器 —— 必须说出来，否则用户不知道自己"少跑了一截"。
+       */
+      boostLimited: Boolean(nominalMhz && whole?.max && whole.max < nominalMhz * 0.9),
     };
   })();
+  // 睿频状态：**不能用"你比别人低"的口吻**。
+  // 基准机本身就是在关闭睿频的状态下标定的（5825U 开 boost 发热太大），
+  // 所以"关睿频"不是异常，只是这台机器的能效取向；真正需要说清楚的是
+  // "榜上混着两种状态，跨状态不比"。实测值已经如实记录了频率，用户自己看得见。
+  if (detail.cpuClock?.boostLimited) {
+    caveats.push(
+      `CPU 标称最高 ${detail.cpuClock.nominalMaxMhz} MHz，实测峰值 ${detail.cpuClock.maxMhz} MHz —— 睿频未启用（BIOS 关闭 Turbo、功耗墙或温度墙限制）。这是常见的静音/省电取向，不是故障；但开启睿频的机器在多核项目上会明显更高，跨状态比较时请留意。`,
+    );
+  }
+
   return {
     metrics,
     durations,
