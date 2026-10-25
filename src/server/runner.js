@@ -119,7 +119,15 @@ export async function runSuite({ targetDir, onEvent = () => {}, opts = {} }) {
     const { bw, lat } = await runBenchJob("memory");
     metrics.mem_copy = bw.gbs;
     metrics.mem_latency = lat.ns;
-    detail.memory = { ...bw.detail, ...lat.detail };
+    detail.memory = {
+      ...bw.detail,
+      ...lat.detail,
+      // 延迟随工作集变化的曲线：台阶位置就是 L2/L3 的容量边界，
+      // 单个数字看不出"这个 149ns 是主存还是缓存没命中"
+      latencyCurve: lat.samples || [],
+      // 主存延迟含 TLB（页表遍历）开销，报告里要说明，不能当成裸延迟
+      latencyIncludesTlb: true,
+    };
     return true;
   });
 

@@ -1,8 +1,8 @@
 /* 自动生成，勿手改：node worker/scripts/sync-assets.mjs */
 export const baselines = {
-  "suite": "1.1.0",
-  "client": "2.9.1",
-  "measured_at": "2026-10-22T17:07:25.622Z",
+  "suite": "1.2.0",
+  "client": "2.9.3",
+  "measured_at": "2026-10-25",
   "machine": {
     "cpu_model": "AMD Ryzen 7 5825U with Radeon Graphics",
     "arch": "x64",
@@ -12,14 +12,14 @@ export const baselines = {
     "boost": "off",
     "freq_mhz": 2000
   },
-  "note": "1000 分 = 这台基准机的实测水平；分数只用于同套件版本内的横向比较。 基准机 5825U 全程关闭睿频（基础频率 2.0 GHz）测得：开启睿频的机器在多核与加解密项目上会显著更高，这是能效取向差异，不是测量误差。",
+  "note": "1000 分 = 这台基准机的实测水平；分数只用于同套件版本内的横向比较。 基准机 5825U 全程关闭睿频（基础频率 2.0 GHz）测得：开启睿频的机器在多核与加解密项目上会显著更高，这是能效取向差异，不是测量误差。 1.2.0：内存测量改为完整预热+多次取中位数（原实现缺页污染首次测量、且取最好值高估近一倍），基准同步重测。",
   "metrics": {
     "cpu_single": 1814.7,
     "cpu_multi": 14556.8,
     "crypto_aes": 1239.4,
     "zlib": 27,
-    "mem_copy": 17.55,
-    "mem_latency": 108,
+    "mem_copy": 8.69,
+    "mem_latency": 145,
     "disk_seq_read": 419.5,
     "disk_seq_write": 202,
     "disk_rand_read": 6299,
