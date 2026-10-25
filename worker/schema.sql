@@ -45,3 +45,9 @@ CREATE TABLE IF NOT EXISTS feedback (
 
 CREATE INDEX IF NOT EXISTS idx_feedback_time ON feedback (received_at DESC);
 CREATE INDEX IF NOT EXISTS idx_feedback_ip ON feedback (ip, received_at DESC);
+
+-- 赛道隔离：物理机 / 虚拟机分开排名（v2.4.0 起）
+-- 虚拟机的 CPU/内存/磁盘全是宿主机的，磁盘还常被页缓存放大，混在一起比没有意义。
+ALTER TABLE entries ADD COLUMN env_type TEXT;   -- physical / vm / container
+ALTER TABLE entries ADD COLUMN vm_tech TEXT;    -- QEMU/KVM、VMware、Hyper-V…
+CREATE INDEX IF NOT EXISTS idx_entries_track ON entries (suite, arch, env_type, composite DESC);

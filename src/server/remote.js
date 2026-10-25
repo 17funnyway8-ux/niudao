@@ -252,6 +252,8 @@ export async function submit(result, alias) {
     fingerprint: result.fingerprint,
     arch: result.arch,
     alias: alias ?? settings.alias,
+    env_type: result.envInfo?.type || result.env?.type || "physical",
+    vm_tech: result.envInfo?.tech || result.env?.tech || "",
     // 卷路径是用户自己的目录结构，公共榜上不需要，别带出去
     hardware: (() => {
       const { volume, ...rest } = result.hardware || {};
@@ -265,8 +267,8 @@ export async function submit(result, alias) {
   return call("/api/v1/submit", { method: "POST", body: payload, token: settings.leaderboardToken });
 }
 
-export async function leaderboard({ dim = "overall", arch = "", cpu = "", limit = 50, offset = 0, score = null, mine = "", fp = "" } = {}) {
-  const q = new URLSearchParams({ dim, limit: String(limit), offset: String(offset) });
+export async function leaderboard({ dim = "overall", arch = "", cpu = "", track = "physical", limit = 50, offset = 0, score = null, mine = "", fp = "" } = {}) {
+  const q = new URLSearchParams({ dim, limit: String(limit), offset: String(offset), track });
   if (arch) q.set("arch", arch);
   if (cpu) q.set("cpu", cpu);
   // 两端的参数名不同：自托管端按指纹（fp）认机器，Worker 端按条目 id（mine）认。

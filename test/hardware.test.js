@@ -75,3 +75,31 @@ test("主板型号过滤厂商占位符（DMI 里的 Default string / To Be Fill
   assert.ok(!/default string/i.test(hw.board), `不该出现 "Default string"，实际：${hw.board}`);
   assert.ok(!/to be filled/i.test(hw.board), `不该出现 OEM 占位符，实际：${hw.board}`);
 });
+
+test("运行环境判定：物理机必须判 physical，QEMU/VMware 特征必须判 vm", async () => {
+  const { detectEnv, envFromHardwareText } = await import("../src/server/hardware.js");
+  const env = detectEnv();
+  assert.ok(["physical", "vm", "container"].includes(env.type));
+  // 本机是物理机（无 hypervisor 标志、DMI 无虚拟化字样）
+  assert.equal(env.type, "physical", `本机应判物理机，实际 ${env.type} tech=${env.tech}`);
+  assert.ok(Array.isArray(env.evidence));
+
+  // 服务端复核：DMI 文本里的虚拟化特征必须能被认出来
+  for (const [text, tech] of [
+    ["QEMU Standard PC (i440FX + PIIX, 1996)", "QEMU/KVM"],
+    ["QEMU QEMU Virtual Machine", "QEMU/KVM"],
+    ["VMware Virtual Platform", "VMware"],
+    ["VirtualBox", "VirtualBox"],
+    ["Microsoft Corporation Virtual Machine", "Hyper-V"],
+    ["Xen HVM domU", "Xen"],
+  ]) {
+    const r = envFromHardwareText(text);
+    assert.ok(r, `应识别出虚拟化：${text}`);
+    assert.equal(r.type, "vm");
+    assert.equal(r.tech, tech, `${text} 应判为 ${tech}，实际 ${r.tech}`);
+  }
+  // 真实主板不该被误判
+  assert.equal(envFromHardwareText("Default string DS2501"), null);
+  assert.equal(envFromHardwareText("AZW ME Pro"), null);
+  assert.equal(envFromHardwareText("OneThing Cloud OES"), null);
+});

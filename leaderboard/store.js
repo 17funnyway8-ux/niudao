@@ -79,7 +79,7 @@ export class Store {
   }
 
   /** 某维度下参与排名的机器（每台机器取其最好成绩） */
-  ranked(suite, arch, cpu = "") {
+  ranked(suite, arch, cpu = "", track = "all") {
     const out = [];
     for (const e of this.best.values()) {
       if (suite && e.suite !== suite) continue;
@@ -90,6 +90,8 @@ export class Store {
         const model = (e.hardware?.cpu_model || "").trim();
         if (!model || /^unknown$/i.test(model) || model !== cpu) continue;
       }
+      if (track === "physical" && (e.env_type || "physical") !== "physical") continue;
+      if (track === "vm" && !["vm", "container"].includes(e.env_type || "")) continue;
       out.push(e);
     }
     return out;
@@ -101,10 +103,10 @@ export class Store {
     return d && Number.isFinite(d.score) ? d.score : null;
   }
 
-  leaderboard({ dim = "overall", suite = "", arch = "", cpu = "", limit = 50, offset = 0, score = null, excludeId = null, fingerprint = "" }) {
+  leaderboard({ dim = "overall", suite = "", arch = "", cpu = "", track = "all", limit = 50, offset = 0, score = null, excludeId = null, fingerprint = "" }) {
     // 注意：fingerprint 只用来"认出哪一行是我"，绝不能用它过滤榜单 ——
     // 否则自己的榜单会被筛成只剩自己一条。
-    const pool = this.ranked(suite, arch, cpu)
+    const pool = this.ranked(suite, arch, cpu, track)
       .map((e) => ({ e, v: this.valueOf(e, dim) }))
       .filter((x) => Number.isFinite(x.v))
       .sort((a, b) => b.v - a.v || (a.e.ts || 0) - (b.e.ts || 0));
@@ -132,6 +134,8 @@ export class Store {
       isMine: Boolean(fingerprint) && (x.e.id === mine || x.e.fingerprint === fingerprint),
       value: x.v,
       composite: x.e.scores.composite,
+      envType: x.e.env_type || "physical",
+      vmTech: x.e.vm_tech || "",
       arch: x.e.arch,
       ts: x.e.ts,
       suite: x.e.suite,

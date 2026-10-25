@@ -260,6 +260,8 @@ async function startRun(body = {}) {
         errors: run.errors,
         wallMs: run.wallMs,
         env: { thermals: hw.thermals, loadavg: hw.loadavg, uptime_hours: hw.uptime_hours },
+        // 运行环境（物理机/虚拟机）随成绩一起存：报告要显示，提交时也要带上
+        envInfo: hw.env || null,
         baselineSuite: baseline.suite,
       };
       appendResult(result);
@@ -924,6 +926,9 @@ async function handleApi(req, res, url) {
     const arch = url.searchParams.get("arch") || "";
     // 同型号：客户端只传 "1"，真正型号以本机硬件为准（不允许任意字符串注入过滤条件）
     const cpuOnly = url.searchParams.get("cpu") === "1";
+    // 赛道：physical（默认）/ vm / all
+    const trackRaw = url.searchParams.get("track") || "physical";
+    const track = ["physical", "vm", "all"].includes(trackRaw) ? trackRaw : "physical";
     const myCpu = hardware()?.hardware?.cpu_model || "";
     const limit = Math.min(200, Number(url.searchParams.get("limit")) || 50);
     if (!remote.isConfigured()) {
@@ -934,10 +939,10 @@ async function handleApi(req, res, url) {
         me: latest ? { id: latest.id, value: latest.composite, rank: local.entries.findIndex((e) => e.id === latest.id) + 1 || null } : null,
       });
     }
-    const cacheKey = `${dim}|${arch}|${cpuOnly ? myCpu : ""}|${limit}`;
+    const cacheKey = `${dim}|${arch}|${cpuOnly ? myCpu : ""}|${track}|${limit}`;
     const force = ["1", "true"].includes(String(url.searchParams.get("refresh") || ""));
     const ident = myIdentity();
-    const params = { dim, arch, cpu: cpuOnly ? myCpu : "", limit, mine: ident.id, fp: ident.fp, score: myBoardScore(dim) };
+    const params = { dim, arch, cpu: cpuOnly ? myCpu : "", track, limit, mine: ident.id, fp: ident.fp, score: myBoardScore(dim) };
     const hit = boardCache.get(cacheKey);
 
     // 有缓存就先用缓存铺屏，后台再更新：CF 那条链路好坏看运气，

@@ -398,6 +398,106 @@ function volumes() {
   return [...seen.values()];
 }
 
+/**
+ * 运行环境判定：物理机 / 虚拟机 / 容器。
+ *
+ * 为什么要分开：虚拟机的 CPU、内存、磁盘全是宿主机的，磁盘还经常被页缓存
+ * 放大到物理上不可能的数。把虚机和真机放同一个榜上比，等于让一台 4 线程的
+ * 虚机去抢真实 NAS 的排名 —— 对真机用户不公平，对虚机用户也没参考价值。
+ *
+ * 判定依据全部来自内核，公开可核对（报告里会列出命中的证据）：
+ *  1. DMI 厂商/型号里的虚拟化特征（QEMU / VMware / VirtualBox / Hyper-V / Xen / Bochs…）
+ *  2. /proc/cpuinfo 的 hypervisor 标志位（KVM、云主机都会置位）
+ *  3. /sys/hypervisor/type
+ *  4. 容器：/.dockerenv、/proc/1/cgroup
+ */
+const VM_SIGNATURES = [
+  [/qemu/i, "QEMU/KVM"],
+  [/kvm/i, "QEMU/KVM"],
+  [/proxmox/i, "Proxmox VE"],
+  [/vmware/i, "VMware"],
+  [/virtualbox|innotek/i, "VirtualBox"],
+  [/parallels/i, "Parallels"],
+  [/xen/i, "Xen"],
+  [/hyper-?v|microsoft corporation/i, "Hyper-V"],
+  [/bochs/i, "Bochs"],
+  [/virtual machine/i, "虚拟机"],
+  [/alibaba cloud|aliyun/i, "阿里云 ECS"],
+  [/tencent cloud/i, "腾讯云 CVM"],
+];
+
+let envCache = null;
+
+export function detectEnv() {
+  if (envCache) return envCache;
+  const evidence = [];
+
+  // ---- 容器 ----
+  let container = false;
+  try {
+    if (fs.existsSync("/.dockerenv")) {
+      container = true;
+      evidence.push("/.dockerenv 存在");
+    }
+  } catch {
+    /* ignore */
+  }
+  const cgroup = read("/proc/1/cgroup") || "";
+  if (/(docker|kubepods|containerd|lxc)/i.test(cgroup)) {
+    container = true;
+    evidence.push(`/proc/1/cgroup 含容器特征`);
+  }
+
+  // ---- 虚拟机 ----
+  const dmi = {
+    sys_vendor: read("/sys/class/dmi/id/sys_vendor") || "",
+    product_name: read("/sys/class/dmi/id/product_name") || "",
+    board_vendor: read("/sys/class/dmi/id/board_vendor") || "",
+    board_name: read("/sys/class/dmi/id/board_name") || "",
+    bios_vendor: read("/sys/class/dmi/id/bios_vendor") || "",
+  };
+  const haystack = Object.values(dmi).filter(Boolean).join(" ");
+  let tech = "";
+  for (const [re, name] of VM_SIGNATURES) {
+    if (re.test(haystack)) {
+      tech = name;
+      evidence.push(`DMI 含虚拟化特征：${haystack.slice(0, 60)}`);
+      break;
+    }
+  }
+
+  // hypervisor 标志位：KVM / 云主机一定有；物理机没有
+  const cpuinfo = read("/proc/cpuinfo") || "";
+  if (/^flags\s*:.*\bhypervisor\b/m.test(cpuinfo)) {
+    evidence.push("cpuinfo 带 hypervisor 标志位");
+    if (!tech) tech = "未知虚拟化（hypervisor 标志位）";
+  }
+  const hypType = read("/sys/hypervisor/type");
+  if (hypType) {
+    evidence.push(`/sys/hypervisor/type = ${hypType}`);
+    if (!tech) tech = hypType;
+  }
+
+  const isVm = Boolean(tech);
+  envCache = {
+    type: container ? "container" : isVm ? "vm" : "physical",
+    tech: isVm ? tech : container ? "容器" : "",
+    evidence: evidence.slice(0, 4),
+    // 混合场景（容器跑在虚机里）单独标出来，属于最不适合进真机榜的一类
+    containerOnVm: container && isVm,
+  };
+  return envCache;
+}
+
+/** 服务端复核：客户端的自报值可以造假或来自旧版本，用 DMI 字符串再判一次 */
+export function envFromHardwareText(text) {
+  const hay = String(text || "");
+  for (const [re, name] of VM_SIGNATURES) {
+    if (re.test(hay)) return { type: "vm", tech: name };
+  }
+  return null;
+}
+
 function thermals() {
   const zones = [];
   for (const base of ["/sys/class/thermal", "/sys/class/hwmon"]) {
@@ -497,6 +597,7 @@ export function snapshot(opts = {}) {
   return {
     hardware,
     arch: os.arch(),
+    env: detectEnv(),
     hostname: os.hostname(),
     volumes: vols,
     thermals: thermals(),

@@ -192,3 +192,34 @@ test("不传身份时不会把别人的行误判成我的", () => {
   const board = s.leaderboard({});
   assert.equal(board.entries.filter((e) => e.isMine).length, 0);
 });
+
+test("赛道隔离：物理机榜不出现虚拟机，虚机榜只有虚机", () => {
+  const s = tmpStore();
+  const phys = entry({ fp: "aaaa111122223333", alias: "真机" });
+  phys.env_type = "physical";
+  const vm = entry({ fp: "bbbb444455556666", alias: "虚机A" });
+  vm.env_type = "vm";
+  const ctr = entry({ fp: "cccc777788889999", alias: "容器B" });
+  ctr.env_type = "container";
+  s.add(phys);
+  s.add(vm);
+  s.add(ctr);
+
+  const p = s.leaderboard({ track: "physical" });
+  assert.equal(p.total, 1);
+  assert.equal(p.entries[0].alias, "真机");
+
+  const v = s.leaderboard({ track: "vm" });
+  assert.equal(v.total, 2, "虚机与容器同属非物理机赛道");
+  assert.deepEqual(v.entries.map((e) => e.alias).sort(), ["容器B", "虚机A"]);
+
+  assert.equal(s.leaderboard({ track: "all" }).total, 3);
+});
+
+test("老数据没有 env_type 时按物理机处理（避免历史条目整批消失）", () => {
+  const s = tmpStore();
+  s.add(entry({ fp: "dddd111122223333", alias: "老条目" })); // 没有 env_type
+  const p = s.leaderboard({ track: "physical" });
+  assert.equal(p.total, 1);
+  assert.equal(p.entries[0].envType, "physical");
+});

@@ -48,7 +48,7 @@ const state = {
   showCard: false,
   run: null,
   poll: null,
-  board: { dim: "overall", arch: "", cpuOnly: false, data: null, loading: false, error: null },
+  board: { dim: "overall", arch: "", cpuOnly: false, track: "physical", data: null, loading: false, error: null },
   deep: { durationSec: 300, loadDisk: false, liveSeries: [] },
   fast: { liveSeries: [] },
 };
@@ -148,6 +148,16 @@ function cappedTitle(r) {
   if (!capped.length) return "";
   const names = capped.map((k) => state.boot?.metrics?.[k]?.label || k);
   return `${names.join("、")} 超过真实硬件的物理上限（多半是虚拟机/页缓存把数放大了），这几项已按上限计分`;
+}
+
+/** 运行环境：物理机还是虚拟机。虚机还要写明是哪种虚拟化，以及判定依据 */
+function envCell(r) {
+  const env = r.envInfo || r.env || (r.envType ? { type: r.envType, tech: r.vmTech } : null);
+  if (!env || env.type === "physical" || !env.type) return `<span class="pill good">物理机</span>`;
+  const label = env.type === "container" ? "容器" : "虚拟机";
+  const tech = env.tech ? ` · ${esc(env.tech)}` : "";
+  const why = (env.evidence || []).length ? ` title="判定依据：${esc((env.evidence || []).join("；"))}"` : "";
+  return `<span class="pill warn"${why}>${label}${tech}</span>`;
 }
 
 function coreHint(r) {
@@ -324,6 +334,7 @@ function homeView() {
   const hwCard = `<div class="card tight">
       <div class="card-head"><h2>硬件</h2><span class="sub">天梯按此匹配</span></div>
       <dl class="kv">
+        <dt>运行环境</dt><dd>${envCell({ envInfo: boot?.hardware?.env })}</dd>
         <dt>CPU</dt><dd>${esc(hw.cpu_model || "—")}</dd>
         <dt>核心</dt><dd>${hw.cores || "—"} 核 / ${hw.threads || "—"} 线程</dd>
         <dt>内存</dt><dd>${hw.mem_gb || "—"} GB${hw.mem_gib ? ` <span class="faint">（系统可见 ${hw.mem_gib} GiB）</span>` : ""}</dd>
@@ -640,6 +651,7 @@ function resultView() {
           <dt>显卡</dt><dd>${esc(r.hardware.gpu || "—")}</dd>
           <dt>系统</dt><dd>fnOS ${esc(r.hardware.os_version)} · ${esc(r.hardware.kernel)}</dd>
           <dt>测试卷</dt><dd class="mono">${esc(r.hardware.volume)}</dd>
+          <dt>运行环境</dt><dd>${envCell(r)}</dd>
           <dt>指纹</dt><dd class="mono faint">${esc(r.fingerprint)}</dd>
         </dl>
         ${r.caveats?.length ? `<div class="divider"></div><div class="section-title">测试说明</div><div class="faint" style="font-size:12px;line-height:1.7">${r.caveats.map((c) => `· ${esc(c)}`).join("<br/>")}</div>` : ""}
@@ -667,6 +679,17 @@ function boardView() {
         ${dims.map(([k, label]) => `<button class="btn sm ${state.board.dim === k ? "primary" : "ghost"}" data-action="board-dim" data-dim="${k}">${label}</button>`).join("")}
       </div>
       <button class="btn sm ${state.board.cpuOnly ? "primary" : "ghost"}" data-action="board-cpu" title="只和同一颗 CPU 的机器比">${state.board.cpuOnly ? "✓ 同型号" : "同型号"}</button>
+      <span class="seg">
+        ${[
+          ["physical", "物理机"],
+          ["vm", "虚拟机"],
+        ]
+          .map(
+            ([v, label]) =>
+              `<button class="btn sm ${state.board.track === v ? "primary" : "ghost"}" data-action="board-track" data-track="${v}">${label}</button>`,
+          )
+          .join("")}
+      </span>
       <span class="spacer"></span>
       <div class="row seg" style="gap:0">
         ${[
@@ -772,7 +795,7 @@ function boardView() {
                 <td class="rank-cell ${e.rank <= 3 ? "top" : ""}">${e.rank}</td>
                 <td>
                   <div class="truncate">${esc(label)}${mineRow ? ` <span class="pill good" style="font-size:10px">我的</span>` : ""}</div>
-                  <div class="faint" style="font-size:11.5px">${esc(e.hardware?.cpu_model || "")}${e.hardware?.mem_gb ? ` · ${e.hardware.mem_gb}GB` : ""}${e.arch ? ` · ${esc(e.arch)}` : ""}${e.dup && !mineRow ? ` · <span title="花名相同，但这是另一台机器">同名不同机</span>` : ""}</div>
+                  <div class="faint" style="font-size:11.5px">${esc(e.hardware?.cpu_model || "")}${e.hardware?.mem_gb ? ` · ${e.hardware.mem_gb}GB` : ""}${e.arch ? ` · ${esc(e.arch)}` : ""}${e.envType && e.envType !== "physical" ? ` · <span title="跑在虚拟化环境里，与物理机分开排名">${esc(e.vmTech || (e.envType === "container" ? "容器" : "虚拟机"))}</span>` : ""}${e.dup && !mineRow ? ` · <span title="花名相同，但这是另一台机器">同名不同机</span>` : ""}</div>
                 </td>
                 <td class="num">${num(e.value)}</td>
                 <td class="num faint">${num(e.composite)}</td>
@@ -808,7 +831,9 @@ function boardView() {
       同一台机器（按硬件指纹认）只保留<b>最好的一次</b>：跑多次、交多次，榜上不会出现两条；重跑出更低的分不会顶掉原成绩。<br/>
       花名只用来显示，可以重名 —— 区分机器靠指纹，所以和同名的人不会互相覆盖。<br/>
       <b>分数只在同一架构内直接可比</b>：ARM 与 x86 的指令集、内存模型、磁盘栈都不同，
-      整体榜放在一起只是为了热闹，真正有意义的是「同型号」和按架构筛选。
+      整体榜放在一起只是为了热闹，真正有意义的是「同型号」和按架构筛选。<br/>
+      <b>物理机与虚拟机分开排名</b>：虚拟机的 CPU/内存/磁盘都是宿主的，磁盘还常被页缓存放大，
+      混在一起比没有意义。判定依据来自内核（DMI 特征 + hypervisor 标志位），报告里会写出来。
     </div>
   </div>`;
 }
@@ -1097,6 +1122,7 @@ async function loadBoard({ force = false } = {}) {
     const q = new URLSearchParams({ dim: state.board.dim, limit: "50" });
     if (state.board.arch) q.set("arch", state.board.arch);
     if (state.board.cpuOnly) q.set("cpu", "1"); // 同型号：型号由服务端按本机硬件决定
+    q.set("track", state.board.track); // 赛道：物理机 / 虚拟机分开排
     // 服务端有 30 秒新鲜期缓存（省掉一次 CF 握手）：手动刷新要绕过它
     if (force) q.set("refresh", "1");
     state.board.data = await api(`/api/leaderboard?${q}`);
@@ -1189,6 +1215,10 @@ document.addEventListener("click", async (ev) => {
     navigate("#/home");
     setTimeout(() => document.querySelector(".deep-card")?.scrollIntoView({ behavior: "smooth", block: "center" }), 120);
     return;
+  }
+  if (action === "board-track") {
+    state.board.track = el.dataset.track;
+    return loadBoard();
   }
   if (action === "board-arch") {
     state.board.arch = el.dataset.arch;

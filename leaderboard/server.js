@@ -52,6 +52,19 @@ function rateLimit(ip, key, limit, windowMs) {
   return b.count <= limit;
 }
 
+/**
+ * 服务端复核运行环境：不信客户端的自报值。
+ * 旧版本客户端不会上报 env_type，被改过的客户端也可能谎报 physical；
+ * 但 hardware.board / cpu_model 里的虚拟化字样是它自己交上来的，赖不掉。
+ */
+function serverEnvOverride(hardware) {
+  const hay = [hardware?.board, hardware?.cpu_model, hardware?.gpu, hardware?.os_version].filter(Boolean).join(" ");
+  if (/qemu|kvm|proxmox|vmware|virtualbox|innotek|parallels|xen|hyper-?v|microsoft corporation|bochs|virtual machine/i.test(hay)) {
+    return "vm";
+  }
+  return null;
+}
+
 const json = (res, code, body) => {
   const buf = Buffer.from(JSON.stringify(body));
   res.writeHead(code, {
@@ -136,7 +149,7 @@ const server = http.createServer(async (req, res) => {
     if (pathname === "/api/v1/submit" && req.method === "POST") {
       if (!rateLimit(ip, "submit", 12, 3600_000)) return json(res, 429, { error: "提交太频繁，歇一会儿" });
       const body = await readBody(req);
-      const check = validateSubmission(body);
+      const check = validateSubmission({ ...body, __envOverride: serverEnvOverride });
       if (!check.ok) return json(res, 400, { error: check.errors.join("；"), errors: check.errors });
 
       const v = check.value;
@@ -210,13 +223,15 @@ const server = http.createServer(async (req, res) => {
       if (!["overall", "cpu", "memory", "storage"].includes(dim)) return json(res, 400, { error: "dim 不支持" });
       const arch = url.searchParams.get("arch") || "";
       const cpu = (url.searchParams.get("cpu") || "").slice(0, 120);
+      const trackRaw = url.searchParams.get("track") || "physical";
+      const track = ["physical", "vm", "all"].includes(trackRaw) ? trackRaw : "physical";
       const fp = (url.searchParams.get("fp") || "").slice(0, 64);
       const suite = url.searchParams.get("suite") || SUITE_VERSION;
       const limit = Math.min(200, Number(url.searchParams.get("limit")) || 50);
       const offset = Math.max(0, Number(url.searchParams.get("offset")) || 0);
       const scoreRaw = url.searchParams.get("score");
       const score = scoreRaw === null ? null : Number(scoreRaw);
-      const data = store.leaderboard({ dim, suite, arch, cpu, limit, offset, fingerprint: fp, score: Number.isFinite(score) ? score : null });
+      const data = store.leaderboard({ dim, suite, arch, cpu, track, limit, offset, fingerprint: fp, score: Number.isFinite(score) ? score : null });
       return json(res, 200, { mode: "remote", ...data });
     }
 

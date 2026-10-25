@@ -58,6 +58,19 @@ const CORS = {
   "access-control-allow-headers": "content-type,authorization",
 };
 
+/**
+ * 服务端复核运行环境：不信客户端的自报值。
+ * 旧版本客户端不会上报 env_type，被改过的客户端也可能谎报 physical；
+ * 但 hardware.board / cpu_model 里的虚拟化字样是它自己交上来的，赖不掉。
+ */
+function serverEnvOverride(hardware) {
+  const hay = [hardware?.board, hardware?.cpu_model, hardware?.gpu, hardware?.os_version].filter(Boolean).join(" ");
+  if (/qemu|kvm|proxmox|vmware|virtualbox|innotek|parallels|xen|hyper-?v|microsoft corporation|bochs|virtual machine/i.test(hay)) {
+    return "vm";
+  }
+  return null;
+}
+
 const json = (body, status = 200) =>
   new Response(JSON.stringify(body), {
     status,
@@ -110,7 +123,7 @@ async function health(env) {
 
 async function submit(request, env) {
   const body = await request.json().catch(() => null);
-  const check = validateSubmission(body);
+  const check = validateSubmission({ ...body, __envOverride: serverEnvOverride });
   if (!check.ok) return json({ error: check.errors.join("；"), errors: check.errors }, 400);
 
   const v = check.value;
@@ -161,6 +174,9 @@ async function submit(request, env) {
     memory: scores.dims.memory?.score ?? null,
     storage: scores.dims.storage?.score ?? null,
     caveats: v.caveats,
+    // 赛道：客户端自报 + 服务端复核（schema 里已合并），落库用于分开排名
+    env_type: v.envType || "physical",
+    vm_tech: v.vmTech || "",
   };
   await upsertEntry(env.DB, entry);
 
@@ -197,7 +213,10 @@ async function leaderboard(url, env) {
   const scoreRaw = url.searchParams.get("score");
   const score = scoreRaw === null ? null : Number(scoreRaw);
 
-  const where = { suite, arch, cpu };
+  // 赛道：默认只看物理机。虚拟机单独一个榜，混排没有可比性。
+  const trackRaw = url.searchParams.get("track") || "physical";
+  const track = ["physical", "vm", "all"].includes(trackRaw) ? trackRaw : "physical";
+  const where = { suite, arch, cpu, track };
   const total = await countOf(env.DB, where);
   const rows = await entriesOf(env.DB, { ...where, dim: DIMS[dim], limit, offset });
   // 重名处理：花名只是显示名。dup 用来把"同名的另一个人的成绩"和"我的成绩"分开，
@@ -218,6 +237,8 @@ async function leaderboard(url, env) {
     // 是算分用的，不是给别人看的 —— 上一版把整份 hardware 原样返回，等于把用户的
     // 目录结构和磁盘布局贴到公网上。宁可少给，不可多给。
     hardware: publicHardware(JSON.parse(r.hardware)),
+    envType: r.env_type || "physical",
+    vmTech: r.vm_tech || "",
   }));
   // 重名检测：按"花名"计数（不是 nameKey —— 那里面含指纹，按它数永远是 1）。
   // 只在这一页范围内判断足够用：页外同名对用户体验影响很小。
@@ -254,6 +275,7 @@ async function leaderboard(url, env) {
     suite,
     arch: arch || null,
     cpu: cpu || null,
+    track,
     total,
     offset,
     limit,

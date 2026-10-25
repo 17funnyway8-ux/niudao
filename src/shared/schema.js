@@ -68,6 +68,10 @@ export function validateSubmission(input) {
   if (!/^[a-f0-9]{8,64}$/i.test(fingerprint)) errors.push("fingerprint 必须是 8-64 位十六进制");
 
   const arch = str(input.arch, 20);
+  // 运行环境：physical / vm / container。客户端自报，服务端下面还会复核
+  const rawEnv = str(input.env_type, 16).toLowerCase();
+  const envType = ["physical", "vm", "container"].includes(rawEnv) ? rawEnv : "physical";
+  const vmTech = cleanText(input.vm_tech, 40);
   if (!["x64", "arm64", "ia32", "arm"].includes(arch)) errors.push(`arch 不支持: ${arch || "(空)"}`);
 
   // hardware 里的自由文本会原样出现在公开榜单上，和别名走同一套清洗规则
@@ -95,6 +99,10 @@ export function validateSubmission(input) {
     // 露出了（已修）。服务端不需要它们：分数是拿 metrics 重算的。
   };
   if (hardware.threads < 1) errors.push("hardware.threads 必须 >= 1");
+
+  // 依赖注入的复核函数（scoring 不引 hardware，避免循环依赖，由调用方传入判定）
+  const envOverride = typeof input.__envOverride === "function" ? input.__envOverride(hardware) : null;
+  const finalEnv = envOverride || envType;
   if (hardware.mem_gb < 1) errors.push("hardware.mem_gb 必须 >= 1");
 
   const raw = input.metrics && typeof input.metrics === "object" ? input.metrics : {};
@@ -124,6 +132,8 @@ export function validateSubmission(input) {
       fingerprint,
       arch,
       alias: sanitizeAlias(input.alias),
+      envType: finalEnv,
+      vmTech: envOverride ? "由服务端识别" : vmTech,
       hardware,
       metrics,
       durations,

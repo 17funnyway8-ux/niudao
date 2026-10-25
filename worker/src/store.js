@@ -1,7 +1,7 @@
 /** D1 查询层。所有分维度排序都走白名单列名，不拼用户输入。 */
 
 /** 统一构造 WHERE 片段（值全部绑定） */
-function whereClause({ suite, arch, cpu, above, equal, lt, gt } = {}) {
+function whereClause({ suite, arch, cpu, track, above, equal, lt, gt } = {}) {
   const parts = [];
   const binds = [];
   if (suite) {
@@ -11,6 +11,12 @@ function whereClause({ suite, arch, cpu, above, equal, lt, gt } = {}) {
   if (arch) {
     parts.push("arch = ?");
     binds.push(arch);
+  }
+  // 赛道：physical = 只排物理机；vm = 虚机/容器；不传 = 全部
+  if (track === "physical") {
+    parts.push("(env_type = 'physical' OR env_type IS NULL)"); // NULL = 旧数据，按物理机处理（下面有回填）
+  } else if (track === "vm") {
+    parts.push("env_type IN ('vm', 'container')");
   }
   if (cpu) {
     // cpu 是原始型号字符串，全部走绑定参数；这里是精确匹配，跟自托管端一致
@@ -51,7 +57,7 @@ export async function entriesOf(db, { dim = "composite", limit = 50, offset = 0,
   const order = "DESC";
   const rows = await db
     .prepare(
-      `SELECT id, ts, suite, arch, alias, fingerprint, hardware, composite, cpu, memory, storage
+      `SELECT id, ts, suite, arch, alias, fingerprint, hardware, env_type, vm_tech, composite, cpu, memory, storage
          FROM entries ${sql}
         ORDER BY ${dim} ${order}, ts ASC
         LIMIT ? OFFSET ?`,
@@ -107,8 +113,8 @@ export async function upsertEntry(db, e) {
     .prepare(
       `INSERT INTO entries
          (id, ts, received_at, suite, client, fingerprint, arch, alias, hardware, metrics, scores,
-          composite, cpu, memory, storage, caveats)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          composite, cpu, memory, storage, caveats, env_type, vm_tech)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(fingerprint, suite) DO UPDATE SET
          id = excluded.id,
          ts = excluded.ts,
@@ -143,6 +149,8 @@ export async function upsertEntry(db, e) {
       e.memory,
       e.storage,
       JSON.stringify(e.caveats || []),
+      e.env_type || "physical",
+      e.vm_tech || "",
     )
     .run();
 }
