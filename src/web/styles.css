@@ -867,3 +867,34 @@ input[type="checkbox"] { width: 14px; height: 14px; accent-color: var(--accent);
   font-weight: 600;
   letter-spacing: .01em;
 }
+
+/* ---------------- 天梯页筛选：三行分组 ----------------
+   原来 8 组按钮平铺在一行，用户要在一排里找"我该点哪个"，分类反而模糊。
+   现在按维度 / 赛道 / 架构分行，每行左侧一个标签，右侧一句说明。 */
+.board-filters {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  margin: 14px 0 6px;
+}
+.filter-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  flex-wrap: wrap;
+}
+.filter-label {
+  flex: none;
+  width: 32px;
+  font-size: 11.5px;
+  color: var(--muted);
+  letter-spacing: .04em;
+}
+.filter-note {
+  font-size: 11.5px;
+  color: var(--faint);
+}
+@media (max-width: 560px) {
+  .filter-label { width: auto; }
+  .filter-note { display: none; }
+}

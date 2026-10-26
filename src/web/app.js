@@ -805,36 +805,52 @@ function boardView() {
     ["storage", "存储"],
   ];
 
-  const filters = `<div class="row" style="flex-wrap:wrap;gap:8px">
-      <div class="row" style="gap:4px">
-        ${dims.map(([k, label]) => `<button class="btn sm ${state.board.dim === k ? "primary" : "ghost"}" data-action="board-dim" data-dim="${k}">${label}</button>`).join("")}
+  // 三行分开：维度 / 赛道 / 架构。原来挤在一行里，8 组按钮平铺，
+  // 用户要在一排里找"我该点哪个"，分类反而变模糊了。
+  const filters = `<div class="board-filters">
+      <div class="filter-row">
+        <span class="filter-label">维度</span>
+        <span class="seg">
+          ${dims
+            .map(
+              ([k, label]) =>
+                `<button class="btn sm ${state.board.dim === k ? "primary" : "ghost"}" data-action="board-dim" data-dim="${k}">${label}</button>`,
+            )
+            .join("")}
+        </span>
+        <button class="btn sm ${state.board.cpuOnly ? "primary" : "ghost"}" data-action="board-cpu" title="只和同一颗 CPU 的机器比">${state.board.cpuOnly ? "✓ 同型号" : "同型号"}</button>
       </div>
-      <button class="btn sm ${state.board.cpuOnly ? "primary" : "ghost"}" data-action="board-cpu" title="只和同一颗 CPU 的机器比">${state.board.cpuOnly ? "✓ 同型号" : "同型号"}</button>
-      <span class="seg">
-        ${[
-          ["physical", "物理机"],
-          ["vm", "虚拟机"],
-        ]
-          .map(
-            ([v, label]) =>
-              `<button class="btn sm ${state.board.track === v ? "primary" : "ghost"}" data-action="board-track" data-track="${v}">${label}</button>`,
-          )
-          .join("")}
-      </span>
-      <span class="spacer"></span>
-      <div class="row seg" style="gap:0">
-        ${[
-          ["", "全部架构"],
-          ["x64", "x86_64"],
-          ["arm64", "ARM64"],
-        ]
-          .map(
-            ([v, label]) =>
-              `<button class="btn sm ${state.board.arch === v ? "primary" : "ghost"}" data-action="board-arch" data-arch="${v}">${label}</button>`,
-          )
-          .join("")}
+      <div class="filter-row">
+        <span class="filter-label">赛道</span>
+        <span class="seg">
+          ${[
+            ["physical", "物理机"],
+            ["vm", "虚拟机"],
+          ]
+            .map(
+              ([v, label]) =>
+                `<button class="btn sm ${state.board.track === v ? "primary" : "ghost"}" data-action="board-track" data-track="${v}">${label}</button>`,
+            )
+            .join("")}
+        </span>
+        <span class="filter-note">虚拟机的硬件来自宿主机，与物理机分开排名</span>
       </div>
-      <button class="btn sm ghost" data-action="board-refresh">刷新</button>
+      <div class="filter-row">
+        <span class="filter-label">架构</span>
+        <span class="seg">
+          ${[
+            ["", "全部"],
+            ["x64", "x86_64"],
+            ["arm64", "ARM64"],
+          ]
+            .map(
+              ([v, label]) =>
+                `<button class="btn sm ${state.board.arch === v ? "primary" : "ghost"}" data-action="board-arch" data-arch="${v}">${label}</button>`,
+            )
+            .join("")}
+        </span>
+        <span class="filter-note">ARM 与 x86 只在各自架构内可比</span>
+      </div>
     </div>`;
 
   let body = "";
@@ -980,6 +996,8 @@ function boardView() {
         <span class="spacer"></span>
         ${data?.total ? `<span class="pill">${num(data.total)} 台机器</span>` : ""}
         ${state.board.cpuOnly ? `<span class="pill good">同型号</span>` : ""}
+        ${/* 刷新挨着"机器数"放：用户想刷新的动机就是"数字变了没" */""}
+        <button class="btn sm ghost" data-action="board-refresh">刷新</button>
       </div>
       ${filters}
       <div class="divider"></div>

@@ -4,6 +4,26 @@
     "items": [
       {
         "type": "tips",
+        "helpText": "牛刀完全免费。下面两项可在应用内随时修改，装错了也不用重装。"
+      },
+      {
+        "type": "radio",
+        "field": "wizard_auto_submit",
+        "label": "测完自动提交到天梯",
+        "initValue": "1",
+        "options": [
+          {
+            "label": "开启（推荐）—— 测完直接上榜，能看到自己排第几",
+            "value": "1"
+          },
+          {
+            "label": "关闭 —— 只在本机测量，不向任何服务器发送数据",
+            "value": "0"
+          }
+        ]
+      },
+      {
+        "type": "tips",
         "helpText": "榜单显示名会自动使用你的主机名（可在应用内改）。"
       },
       {
