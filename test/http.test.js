@@ -246,3 +246,15 @@ test("深度档绝不上传：不自动提交，手动提交也被拒", async ()
   const body = await r.json();
   assert.match(body.error, /深度档/, `拒绝理由应说明深度档不参与，实际：${body.error}`);
 });
+
+test("榜单限流(429)不能提示用户去改设置——那是服务器忙，不是配错地址", () => {
+  const src = fs.readFileSync(new URL("../src/web/app.js", import.meta.url), "utf8");
+  // 429 分支必须单独判断，且文案要说清"不是你这边的问题"
+  assert.ok(/429\|too many\|rate limit/i.test(src), "缺少对 429 的识别");
+  assert.ok(/榜单繁忙/.test(src), "429 应该有专门的标题，而不是笼统的「连不上」");
+  assert.ok(/不是你这边的问题/.test(src), "必须明确告诉用户不是他的配置问题");
+  // 保活不能无脑每 25 秒发一次（曾把 CF 免费配额打爆）
+  const http = fs.readFileSync(new URL("../src/server/http.js", import.meta.url), "utf8");
+  assert.ok(!/refreshEdgeHealth, 25_000/.test(http), "25 秒保活会把免费配额打爆，必须改成按需+降频");
+  assert.ok(/lastActivityAt > 5 \* 60_000/.test(http), "应该在闲置时停止保活");
+});

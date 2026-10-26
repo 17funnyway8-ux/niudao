@@ -863,7 +863,14 @@ function boardView() {
       没有服务器时，下面是本机的历史成绩排名。
     </div>`;
   } else if (b.configured && b.ok === false) {
-    body = `<div class="hint-box"><b class="pill bad">连不上</b> ${esc(b.error || "")}<br/>检查设置里的地址，或确认榜单服务在跑。</div>`;
+    // 429 是"榜单服务器忙"，不是用户配错了地址。原来一律提示"检查设置里的地址"，
+    // 结果大家都跑去翻设置，白折腾。
+    const busy = /429|too many|rate limit|限流|上限/i.test(String(b.error || ""));
+    body = busy
+      ? `<div class="hint-box"><b class="pill warn">榜单繁忙</b> ${esc(b.error || "")}<br/>
+          这是榜单服务器今日访问量达到上限，不是你这边的问题 —— 稍后会自动恢复（按 UTC 零点重置）。
+          体检、成绩单、本机历史都正常可用，不受影响。</div>`
+      : `<div class="hint-box"><b class="pill bad">连不上</b> ${esc(b.error || "")}<br/>检查设置里的地址，或确认榜单服务在跑。</div>`;
   }
 
   if (!data) {

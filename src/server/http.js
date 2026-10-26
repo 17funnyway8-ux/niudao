@@ -54,6 +54,8 @@ const state = {
 };
 
 let hwCache = { at: 0, value: null };
+/** 最近一次有 HTTP 请求的时间，用于决定要不要给 CF 发保活 */
+let lastActivityAt = Date.now();
 
 // 成绩库统计是同步 SQLite 查询。磁盘测试（dd O_DIRECT 打满盘）期间，
 // 这个查询会被卡住几秒，把整个事件循环一起拖住。缓存 5 秒，别让 /api/health 变成暗坑。
@@ -552,6 +554,7 @@ function humanAge(sec) {
 async function handleApi(req, res, url) {
   const { pathname } = url;
   const method = req.method || "GET";
+  lastActivityAt = Date.now(); // 有人在用，保活才有意义
 
   if (pathname === "/api/health") {
     const uptimeSec = Math.round(process.uptime());
@@ -1128,6 +1131,10 @@ export function createServer() {
 export function start({ port = 0, socketPath = "" } = {}) {
   initLogger(PATHS.data);
 
+  // 最近一次有请求打进来的时间。榜单保活只在"有人在用"时才跑 ——
+  // 挂在后台没人用的实例一个请求都不该往 CF 发（免费版配额是共享的）。
+  lastActivityAt = Date.now();
+
   hydrateBoardCache();
 
   // 启动顺序很重要：先优选 CF 边缘 IP，再预热榜单。
@@ -1152,8 +1159,20 @@ export function start({ port = 0, socketPath = "" } = {}) {
   // 预热 + 保活榜单连接。国内到 Cloudflare 的握手是随机丢包的，
   // 实测复用连接 ~400ms、新连接 0.3–15s；池子里 idle 超过 ~60s 就会退化成死连接，
   // 所以 25 秒喂一次，让绝大多数用户请求都走热连接。
+  // ⚠️ 这里的频率直接吃 Cloudflare 免费版的配额（10 万请求/天）。
+  // 原来每 25 秒喂一次保活 = 单机 3456 次/天，129 台内测机器叠加后实测跑到
+  // 131,513 次/天，直接把配额打爆 → 全网 429（CF error 1027），所有人连不上榜单。
+  //
+  // 现在的策略是"按需保活"：
+  //   · 只有最近 5 分钟内真的有人用过（有请求打进来）才保活；
+  //     应用挂在后台没人点时，一次请求都不发。
+  //   · 间隔 25s → 45s（仍在 CF 连接 ~60s 退化的阈值内，热连接依然有效）。
+  //   · 保活失败也不重试放大，交给请求时的对冲重试兜底。
   refreshEdgeHealth();
-  setInterval(refreshEdgeHealth, 25_000).unref();
+  setInterval(() => {
+    if (Date.now() - lastActivityAt > 5 * 60_000) return; // 闲了就别喂了
+    refreshEdgeHealth();
+  }, 45_000).unref();
 
   // 事件循环阻塞监控：体检时如果某项把主线程卡住，页面上的进度就会停住。
   // 这个指标（+ 告警日志）用来盯住这件事，别再靠用户反馈"界面卡了"才发现。
