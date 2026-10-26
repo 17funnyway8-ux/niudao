@@ -119,6 +119,46 @@ async function runDd(args, timeoutMs, opts = {}) {
   return { ok: r.ok, status: r.status, stderr: (r.stderr || "").trim().slice(0, 300) };
 }
 
+/**
+ * 生成一块**不可压缩**的随机数据作为写入源。
+ *
+ * 为什么必须这么做：原来写的是 `dd if=/dev/zero`，全零数据在开启压缩的文件系统
+ * （btrfs zstd/lz4，飞牛的卷默认可能开）上会被压到几乎为 0 —— 写瞬间完成，读走解压路径，
+ * 测出来的是压缩吞吐而不是磁盘速度。内测数据里已经出现实证：
+ *   · Intel N150（入门级低功耗）报 10,233 MB/s
+ *   · i7-8700 + H310 主板报 13,128 MB/s 顺序读 + 169,087 IOPS（QD1 下等于 5.9μs 延迟，内存级）
+ * 这两个数字在物理上都不可能。
+ *
+ * 用 /dev/urandom 直接写会引入另一个瓶颈：urandom 生成速度约 400–800 MB/s 单核，
+ * 比 NVMe 慢，会把高速盘测成"urandom 的速度"。所以先生成一小块高熵种子，
+ * 再重复写满目标文件 —— btrfs 压缩按 128KB 块独立处理，重复的块内部仍是高熵，压不动。
+ */
+const SEED_MB = 64;
+
+async function makeSeed(targetDir) {
+  const seed = path.join(targetDir, ".niudao-seed.bin");
+  const r = await run("dd", ["if=/dev/urandom", `of=${seed}`, "bs=1M", `count=${SEED_MB}`, "status=none"], 120000);
+  if (!r.ok) {
+    await rmQuiet(seed);
+    return null;
+  }
+  return seed;
+}
+
+/** 用种子重复写满目标文件（每次 SEED_MB，O_DIRECT 逐段覆盖） */
+async function fillWithSeed(seed, file, totalMb, onProgress) {
+  const parts = Math.ceil(totalMb / SEED_MB);
+  for (let i = 0; i < parts; i += 1) {
+    const count = Math.min(SEED_MB, totalMb - i * SEED_MB);
+    const args = [`if=${seed}`, `of=${file}`, "bs=1M", `count=${count}`, `seek=${i * SEED_MB}`, "conv=notrunc"];
+    const r = await runDd([...args, "oflag=direct", "status=progress"], 180000, {
+      onLine: (line) => { try { onProgress?.({ phase: "write", ...line, part: i + 1, parts }); } catch { /* 忽略 */ } },
+    });
+    if (!r.ok) return { ok: false, direct: false, stderr: r.stderr };
+  }
+  return { ok: true, direct: true };
+}
+
 export async function diskSeq(targetDir, { sizeMb = 512, onProgress } = {}) {
   const caveats = [];
   const file = path.join(targetDir, ".niudao-seq.bin");
@@ -136,17 +176,30 @@ export async function diskSeq(targetDir, { sizeMb = 512, onProgress } = {}) {
   // 原来用 conv=fdatasync 让 dd 在退出前落盘，但那段 fsync 时间也被算进了 wall time，
   // 于是写在内存里被吞掉（virtio/QEMU 虚机尤其明显）、或者盘上队列深时，
   // 会把 8 GB/s 甚至几万 MB/s 当成磁盘速度。现在：不 fsync，结束单独 fsync 并只记录不扣分。
+  // 种子文件供"不可压缩写"使用；拿不到就退回全零（并明确记录，不静默降级）
+  const seed = await makeSeed(targetDir);
+  if (!seed) caveats.push("无法生成随机种子，顺序写使用全零数据（在压缩文件系统上会偏高）");
+
   let tw = clock();
-  let w = await runDd(["if=/dev/zero", `of=${file}`, "bs=1M", `count=${mb}`, "oflag=direct", "status=progress"], 180000, {
-    onLine: (line) => { try { onProgress?.({ phase: "write", ...line }); } catch { /* 忽略 */ } },
-  });
+  let w;
+  if (seed) {
+    w = await fillWithSeed(seed, file, mb, onProgress);
+  } else {
+    w = await runDd(["if=/dev/zero", `of=${file}`, "bs=1M", `count=${mb}`, "oflag=direct", "status=progress"], 180000, {
+      onLine: (line) => { try { onProgress?.({ phase: "write", ...line }); } catch { /* 忽略 */ } },
+    });
+  }
   if (!w.ok) {
     direct = false;
     caveats.push("文件系统不支持 O_DIRECT，顺序测试含页缓存影响，数值仅供参考");
     tw = clock();
-    w = await runDd(["if=/dev/zero", `of=${file}`, "bs=1M", `count=${mb}`, "status=progress"], 180000, {
-      onLine: (line) => { try { onProgress?.({ phase: "write", ...line }); } catch { /* 忽略 */ } },
-    });
+    if (seed) {
+      w = await fillWithSeed(seed, file, mb, onProgress);
+    } else {
+      w = await runDd(["if=/dev/zero", `of=${file}`, "bs=1M", `count=${mb}`, "status=progress"], 180000, {
+        onLine: (line) => { try { onProgress?.({ phase: "write", ...line }); } catch { /* 忽略 */ } },
+      });
+    }
   }
   const writeSecs = secs(tw, clock());
   if (!w.ok) {
@@ -173,6 +226,7 @@ export async function diskSeq(targetDir, { sizeMb = 512, onProgress } = {}) {
   }
   const readSecs = secs(tr, clock());
   await rmQuiet(file);
+  if (seed) await rmQuiet(seed);
   if (!r.ok) throw new Error(`顺序读失败: ${r.stderr || r.status}`);
 
   const round = (n) => Math.round(n * 10) / 10;
@@ -181,6 +235,7 @@ export async function diskSeq(targetDir, { sizeMb = 512, onProgress } = {}) {
     write_mbs: round(mb / writeSecs),
     detail: {
       sizeMb: mb,
+      incompressible: Boolean(seed),
       direct,
       readSecs: round(readSecs),
       writeSecs: round(writeSecs),

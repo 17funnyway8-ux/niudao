@@ -10,7 +10,7 @@
  */
 import { parentPort, workerData } from "node:worker_threads";
 import { aesThroughput, zlibThroughput } from "./crypto.js";
-import { memBandwidth, memLatency } from "./memory.js";
+import { memBandwidth, memLatency, pickLatencySizeMb } from "./memory.js";
 
 const { job } = workerData;
 
@@ -18,7 +18,8 @@ let result;
 if (job === "crypto") {
   result = { aes: aesThroughput(), zlib: zlibThroughput() };
 } else if (job === "memory") {
-  result = { bw: memBandwidth(), lat: memLatency() };
+  // 延迟环按本机 L3 定大小：固定 32MB 会在 L3 ≥ 32MB 的 CPU 上把内存延迟测成缓存延迟
+  result = { bw: memBandwidth(), lat: memLatency({ sizeMb: pickLatencySizeMb() }) };
 } else {
   throw new Error(`未知的基准任务: ${job}`);
 }

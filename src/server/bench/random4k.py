@@ -16,15 +16,24 @@ BLOCK = 4096
 
 
 def ensure_file(path, size_mb):
+    """准备测试文件。
+
+    写的是**不可压缩的随机数据**，不是全零。
+    全零在开启压缩的文件系统（btrfs zstd/lz4）上会被压到几乎为零，
+    4K 随机读写走的是解压路径，IOPS 会虚高到物理上不可能的程度
+    （内测里出现过 QD1 下 169,087 IOPS = 5.9μs 延迟，那是内存级速度）。
+    """
     need = size_mb * 1024 * 1024
     if os.path.exists(path) and os.path.getsize(path) >= need:
         return False
+    # 128KB 随机块重复使用：btrfs 按 128KB 块独立压缩，块内高熵就压不动
+    chunk = os.urandom(128 * 1024)
     with open(path, "wb") as f:
-        chunk = b"\0" * (1024 * 1024)
         written = 0
         while written < need:
-            f.write(chunk)
-            written += len(chunk)
+            n = min(len(chunk), need - written)
+            f.write(chunk[:n])
+            written += n
         f.flush()
         os.fsync(f.fileno())
     return True

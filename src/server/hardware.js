@@ -65,12 +65,22 @@ function armModel(raw) {
   };
   if (impl || part) {
     const who = IMPLEMENTER[impl] || (impl ? `Impl${impl}` : "");
-    const what = PART[part?.toLowerCase()] || (part ? `Part${part}` : "");
+    // 未收录的 part 号不要甩给用户看（"ARM Part0x000" 对内测用户毫无意义）。
+    // 有实现者就说实现者 + 未知型号，没实现者就只说"ARM 处理器"。
+    const known = PART[part?.toLowerCase()];
+    const what = known || (part ? "未知型号" : "");
     const name = [who, what].filter(Boolean).join(" ");
     // QEMU 里 ARM 核心型号是真的；Apple 实现者 + 未知 part 时，多半是"私有核心 + 虚拟化报告的通用 part"，
     // 硬拼会得到 "Apple Cortex-A53" 这种自相矛盾的型号，所以只保留实现者，并在虚拟化时标注。
     const contradictory = IMPLEMENTER[impl] === "Apple" && PART[part?.toLowerCase()]?.startsWith("Cortex");
-    if (name && !contradictory) return `${name}${generic ? " (虚拟机)" : ""}`;
+    // "ARM 未知型号" 读起来别扭，改成 "ARM 处理器（型号未公开）"
+    const display =
+      !known && who === "ARM"
+        ? "ARM 处理器（型号未公开）"
+        : !known && who
+          ? `${who} 处理器（型号未公开）`
+          : name;
+    if (display && !contradictory) return `${display}${generic ? "（虚拟机）" : ""}`;
     if (IMPLEMENTER[impl] === "Apple") return `Apple Silicon${generic ? " (虚拟机)" : ""}`;
   }
   // 4) 厂商/机型名至少比 unknown 强

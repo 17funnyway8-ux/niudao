@@ -7,8 +7,8 @@
  *  3. 归一化基准（baseline）随套件版本一起锁定，跨版本不比较。
  */
 
-export const SUITE_VERSION = "1.1.0";
-export const CLIENT_VERSION = "2.9.4";
+export const SUITE_VERSION = "1.3.0";
+export const CLIENT_VERSION = "2.9.5";
 
 /** 原始指标定义：unit 展示用，better 决定除法方向 */
 export const METRICS = {
@@ -90,8 +90,8 @@ export const PHYSICAL_MAX = {
   mem_latency: { min: 25 }, // 延迟越低越好，这里给下限
   disk_seq_read: 8000, // MB/s
   disk_seq_write: 7000, // MB/s
-  disk_rand_read: 50000, // IOPS (QD1)
-  disk_rand_write: 50000,
+  disk_rand_read: 30000, // IOPS @QD1（消费级旗舰 20–30k，企业级 Optane 也就 30k 上下）
+  disk_rand_write: 30000,
 };
 
 /** 某个指标的分数上限；null 表示不封顶。由物理上限与基准值换算而来。 */
