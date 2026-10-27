@@ -23,6 +23,17 @@ function arg(name, fallback = "") {
 }
 
 const PORT = Number(process.env.LB_PORT || arg("--port", "8790"));
+/**
+ * 监听地址。**默认只监听本机**。
+ *
+ * 原来写死 0.0.0.0 —— 在只有内网的环境里没问题，但这套服务经常被部署到
+ * 有公网 IP 的机器（家里的 PVE、带 EIP 的云主机）上，0.0.0.0 等于把榜单
+ * 直接挂到公网上，既没有 TLS 也没有任何鉴权。
+ *
+ * 需要局域网内其它机器直接访问时，显式加 --host 0.0.0.0 或设 LB_HOST=0.0.0.0。
+ * 走 Cloudflare Tunnel 时保持默认即可（隧道连的就是 127.0.0.1）。
+ */
+const HOST = process.env.LB_HOST || arg("--host", "127.0.0.1");
 const DATA_DIR = process.env.LB_DATA || arg("--data", path.join(HERE, "data"));
 const ADMIN_TOKEN = process.env.LB_ADMIN_TOKEN || "";
 const BASELINE_FILE = process.env.LB_BASELINES || arg("--baselines", path.join(HERE, "baselines.json"));
@@ -236,6 +247,23 @@ const server = http.createServer(async (req, res) => {
       const track = ["physical", "vm", "all"].includes(trackRaw) ? trackRaw : "physical";
       const fp = (url.searchParams.get("fp") || "").slice(0, 64);
       const suite = url.searchParams.get("suite") || SUITE_VERSION;
+      /**
+       * 旧套件的客户端主动告知它要看的榜。
+       *
+       * 2.9.0~2.9.4 那批已分发的包不会自动升级，它们会一直用 suite=1.1.0 来查榜，
+       * 而服务端已经是 1.3.0 —— 查出来的永远是空榜，用户只会觉得"榜单坏了"。
+       * 这里明确回 426 Upgrade Required 并在 error 里说清楚，客户端的
+       * 「连不上榜单」提示框会原样显示这句话，用户就知道该升级了。
+       *
+       * 为什么不用 200 + 空榜：那等于让用户永远看着一个空页面，还以为是我们挂了。
+       */
+      if (suite && suite !== SUITE_VERSION) {
+        return json(res, 426, {
+          error: `你的牛刀是旧版本（套件 ${suite}），当前榜单是套件 ${SUITE_VERSION}。测量方法已修正，旧成绩作废，请更新到最新版本后重跑一次。`,
+          serverSuite: SUITE_VERSION,
+          clientSuite: suite,
+        });
+      }
       const limit = Math.min(200, Number(url.searchParams.get("limit")) || 50);
       const offset = Math.max(0, Number(url.searchParams.get("offset")) || 0);
       const scoreRaw = url.searchParams.get("score");
@@ -272,7 +300,7 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
-server.listen(PORT, "0.0.0.0", () => {
-  console.log(`[lb] 牛刀天梯服务 http://0.0.0.0:${PORT}  (数据: ${DATA_DIR} / 套件 v${SUITE_VERSION})`);
+server.listen(PORT, HOST, () => {
+  console.log(`[lb] 牛刀天梯服务 http://${HOST}:${PORT}  (数据: ${DATA_DIR} / 套件 v${SUITE_VERSION})`);
   console.log(`[lb] 已收录 ${store.best.size} 台机器、${store.all.length} 条提交`);
 });

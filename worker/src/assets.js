@@ -1,7 +1,7 @@
 /* 自动生成，勿手改：node worker/scripts/sync-assets.mjs */
 export const baselines = {
   "suite": "1.3.0",
-  "client": "2.9.5",
+  "client": "2.9.6",
   "measured_at": "2026-10-26",
   "machine": {
     "cpu_model": "AMD Ryzen 7 5825U with Radeon Graphics",
