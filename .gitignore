@@ -1,6 +1,7 @@
 # 构建产物
-package/app/runtime/
+package/app/
 package/*.fpk
+python-dist/
 
 # 本地数据与缓存
 .data/
@@ -9,10 +10,14 @@ node_modules/
 __pycache__/
 *.log
 
-# 编辑器
+# 发布物（进 GitHub Release，不进仓库）
+outbound/
+.backup/
+
+# 编辑器与系统
 .DS_Store
 
-# 本地工具（fnpack 二进制）
+# 本地工具（fnpack 等二进制）
 .tools/
 
 # Worker 构建产物
@@ -21,3 +26,4 @@ worker/.wrangler/
 
 # 本地凭据
 .env
+.env.*

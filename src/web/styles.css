@@ -796,7 +796,7 @@ input[type="checkbox"] { width: 14px; height: 14px; accent-color: var(--accent);
 .vol-meta { font-size: 11.5px; color: var(--muted); }
 
 /* ---------------- 应用内确认弹窗 ----------------
-   替代 window.confirm：原生弹窗顶部会显示「10.1.1.26:5666 显示」这种域名标题，
+   替代 window.confirm：原生弹窗顶部会显示「192.168.1.10:5666 显示」这种域名标题，
    一眼就暴露"这是个网页"。 */
 .modal-mask {
   position: fixed;
