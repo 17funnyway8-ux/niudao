@@ -47,6 +47,28 @@ const baselines = (() => {
   }
 })();
 
+/**
+ * 基准版本必须和套件版本一致，否则算出来的分数是错的。
+ *
+ * 真实事故：PVE 上第一次部署的包里带的是旧基准（mem_copy 8.69，来自一次错误改动），
+ * 而套件已经是 1.3.0。服务端拿旧基准重算客户端提交的原始指标，
+ * 把本该 988 分的成绩算成了 1932 分，还因为"分数更高"占住了榜首位，
+ * 后续真实成绩反而顶不掉它。
+ *
+ * 客户端和服务端各带一份 baselines.json，这是分发包的固有形态 ——
+ * 所以必须在启动时把版本对齐这件事变成硬约束，而不是静默用错基准。
+ */
+if (baselines.suite !== SUITE_VERSION) {
+  console.error(
+    `[lb] 基准文件版本与套件版本不一致，拒绝启动：\n` +
+      `     基准 baselines.suite = ${baselines.suite}\n` +
+      `     套件 SUITE_VERSION  = ${SUITE_VERSION}\n` +
+      `     用错基准算分会给出错误的排名（曾把 988 分算成 1932）。\n` +
+      `     请用与客户端同版本的 baselines.json 重新部署。`,
+  );
+  process.exit(1);
+}
+
 const store = new Store(path.join(DATA_DIR, "submissions.jsonl"));
 
 /* ---------------- 简易限流 ---------------- */

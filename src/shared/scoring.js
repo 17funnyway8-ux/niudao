@@ -7,8 +7,8 @@
  *  3. 归一化基准（baseline）随套件版本一起锁定，跨版本不比较。
  */
 
-export const SUITE_VERSION = "1.3.0";
-export const CLIENT_VERSION = "2.9.6";
+export const SUITE_VERSION = "1.4.0";
+export const CLIENT_VERSION = "2.9.7";
 
 /** 原始指标定义：unit 展示用，better 决定除法方向 */
 export const METRICS = {
@@ -22,9 +22,14 @@ export const METRICS = {
   disk_seq_write: { label: "磁盘顺序写", unit: "MB/s", better: "higher", group: "storage" },
   disk_rand_read: { label: "4K 随机读 (QD1)", unit: "IOPS", better: "higher", group: "storage" },
   disk_rand_write: { label: "4K 随机写 (QD1)", unit: "IOPS", better: "higher", group: "storage" },
+  // 下面两项不参与评分权重，只用来校验上面两项"是不是真的磁盘"
+  disk_rand_read_lat_us: { label: "4K 随机读延迟", unit: "μs", better: "lower", group: "storage", audit: true },
+  disk_rand_write_lat_us: { label: "4K 随机写延迟", unit: "μs", better: "lower", group: "storage", audit: true },
 };
 
 export const METRIC_KEYS = Object.keys(METRICS);
+/** 参与评分的指标（排除只做校验的 audit 项） */
+export const SCORED_KEYS = METRIC_KEYS.filter((k) => !METRICS[k].audit);
 
 /** 维度 → 原始指标权重（组内和为 1） */
 export const DIMENSIONS = {
@@ -86,12 +91,25 @@ const round = (n, digits = 0) => {
  *
  * 算力类（CPU 单核/多核、AES、zlib、内存带宽）**不封顶**：机器强就是强。
  */
+/**
+ * 4K 随机访问的物理延迟下限（μs）。
+ *
+ * 任何"持久化存储"的单次 4K 访问都不可能快过 10μs：
+ *   DRAM 内存 ~0.1μs / Intel Optane ~10μs / 消费级 NVMe 50–80μs / SATA SSD 100–200μs
+ * 低于这条线的 IOPS 只可能来自页缓存、内存盘或虚拟化的宿主内存 —— 那不是磁盘速度。
+ *
+ * 为什么不能只靠 IOPS 数值封顶：真实高端盘（Optane 40–60k）和虚机缓存（十几万）
+ * 在数值区间上会重叠，封低了误伤真盘，封高了挡不住假数据。
+ * 用延迟判断则没有歧义 —— 延迟是物理量，缓存与否一眼可辨。
+ */
+export const MIN_STORAGE_LAT_US = 10;
+
 export const PHYSICAL_MAX = {
   mem_latency: { min: 25 }, // 延迟越低越好，这里给下限
   disk_seq_read: 8000, // MB/s
   disk_seq_write: 7000, // MB/s
-  disk_rand_read: 30000, // IOPS @QD1（消费级旗舰 20–30k，企业级 Optane 也就 30k 上下）
-  disk_rand_write: 30000,
+  disk_rand_read: 60000, // IOPS @QD1（上限放到 Optane 905P 的 40–60k，不再误伤顶级盘）
+  disk_rand_write: 60000,
 };
 
 /** 某个指标的分数上限；null 表示不封顶。由物理上限与基准值换算而来。 */
@@ -129,10 +147,44 @@ export function isCapped(key, raw, baselines) {
  * @param {Record<string, number>} baselines 基准值（同套件版本）
  * @returns {{subs: object, dims: object, composite: number, coverage: number, partial: boolean}}
  */
+/**
+ * 判定哪些 I/O 指标是"缓存放大"出来的假数据。
+ *
+ * 依据是延迟的物理下限（见 MIN_STORAGE_LAT_US），而不是 IOPS 数值 ——
+ * 数值上真实高端盘和虚机缓存会重叠，延迟上不会。
+ * @returns {Array<{key: string, latUs: number, reason: string}>}
+ */
+export function cacheSuspects(metrics) {
+  const out = [];
+  const pairs = [
+    ["disk_rand_read", "disk_rand_read_lat_us"],
+    ["disk_rand_write", "disk_rand_write_lat_us"],
+  ];
+  for (const [iopsKey, latKey] of pairs) {
+    const lat = Number(metrics?.[latKey]);
+    const iops = Number(metrics?.[iopsKey]);
+    if (!Number.isFinite(lat) || lat <= 0) continue; // 没测到延迟就不做判断
+    if (lat >= MIN_STORAGE_LAT_US) continue;
+    // 延迟低到不像存储；再确认 IOPS 确实高（排除"延迟算错"的极端情况）
+    if (Number.isFinite(iops) && iops > 20000) {
+      out.push({
+        key: iopsKey,
+        latUs: Math.round(lat * 10) / 10,
+        reason: `4K 随机延迟 ${Math.round(lat * 10) / 10}μs，低于持久化存储的物理下限 ${MIN_STORAGE_LAT_US}μs（Optane 约 10μs），判定为页缓存/内存盘/虚拟化内存，不计分`,
+      });
+    }
+  }
+  return out;
+}
+
 export function computeScores(metrics, baselines) {
   const subs = {};
   const capped = [];
-  for (const key of METRIC_KEYS) {
+  // 缓存放大出来的 I/O 指标直接剔除：宁可这一项不算，也不让假数据把总分拉高
+  const suspects = cacheSuspects(metrics);
+  const excluded = new Set(suspects.map((x) => x.key));
+  for (const key of SCORED_KEYS) {
+    if (excluded.has(key)) continue;
     const s = normalizeMetric(key, Number(metrics?.[key]), baselines);
     if (s !== null) {
       subs[key] = round(s, 1);
@@ -163,8 +215,20 @@ export function computeScores(metrics, baselines) {
   }
 
   const composite = totalWeight > 0 ? round(weighted / totalWeight, 0) : 0;
-  const coverage = round(METRIC_KEYS.filter((k) => subs[k] !== undefined).length / METRIC_KEYS.length, 2);
-  return { subs, dims, composite, coverage, capped, partial: totalWeight < 1 || coverage < 1 || capped.length > 0 };
+  // 分母用 SCORED_KEYS：audit 项（4K 延迟）本来就不参与评分，
+  // 把它算进分母会让每台机器都显示"覆盖不全"
+  const coverage = round(SCORED_KEYS.filter((k) => subs[k] !== undefined).length / SCORED_KEYS.length, 2);
+  return {
+    subs,
+    dims,
+    composite,
+    coverage,
+    capped,
+    // 被判为缓存放大、已从评分中剔除的 I/O 指标（报告里要如实说）
+    cacheSuspects: suspects,
+    // 剔除了项也算 partial，让前端显示"部分项不可信"
+    partial: totalWeight < 1 || coverage < 1 || capped.length > 0 || suspects.length > 0,
+  };
 }
 
 export function gradeOf(composite) {

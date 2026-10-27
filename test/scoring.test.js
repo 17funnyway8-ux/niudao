@@ -4,6 +4,7 @@ import fs from "node:fs";
 import {
   DIMENSIONS,
   METRIC_KEYS,
+  SCORED_KEYS,
   PHYSICAL_MAX,
   capOf,
   computeScores,
@@ -24,6 +25,10 @@ const baselines = {
   disk_seq_write: 400,
   disk_rand_read: 8000,
   disk_rand_write: 10000,
+  // audit 项：不参与评分，但基准表里要有（用于校验提交数据的合理性）
+  // 这些值必须是"真实磁盘"的量级，否则审核判据会把正常成绩误判成缓存
+  disk_rand_read_lat_us: 150,
+  disk_rand_write_lat_us: 120,
 };
 
 const perfect = { ...baselines };
@@ -45,18 +50,26 @@ test("每个被计分的指标都真实存在于指标表里", () => {
     }
   }
   assert.deepEqual([...METRIC_KEYS].sort(), Object.keys(baselines).sort(), "指标表与基准表要一一对应");
+  // audit 项必须真的不参与任何维度的权重
+  for (const dim of Object.values(DIMENSIONS)) {
+    for (const key of Object.keys(dim.parts)) {
+      assert.ok(SCORED_KEYS.includes(key), `${key} 是 audit 项，不能进评分权重`);
+    }
+  }
 });
 
 test("基准机跑出基准值 → 每项 1000、综合 1000", () => {
   const s = computeScores(perfect, baselines);
-  for (const key of METRIC_KEYS) assert.equal(s.subs[key], 1000, key);
+  // 只断言参与评分的指标；audit 项（4K 延迟）不进 subs
+  for (const key of SCORED_KEYS) assert.equal(s.subs[key], 1000, key);
+  for (const key of METRIC_KEYS) if (!SCORED_KEYS.includes(key)) assert.equal(s.subs[key], undefined, `${key} 是 audit 项，不该出现在 subs`);
   for (const dim of Object.keys(DIMENSIONS)) assert.equal(s.dims[dim].score, 1000, dim);
   assert.equal(s.composite, 1000);
   assert.equal(s.partial, false);
 });
 
 test("两倍性能 → 两倍分数；延迟类指标反向", () => {
-  const twice = Object.fromEntries(METRIC_KEYS.map((k) => [k, k === "mem_latency" ? baselines[k] / 2 : baselines[k] * 2]));
+  const twice = Object.fromEntries(SCORED_KEYS.map((k) => [k, k === "mem_latency" ? baselines[k] / 2 : baselines[k] * 2]));
   const s = computeScores(twice, baselines);
   assert.equal(s.composite, 2000);
   assert.equal(normalizeMetric("mem_latency", 50, baselines), 2000);

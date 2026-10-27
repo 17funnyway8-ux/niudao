@@ -136,6 +136,10 @@ export async function runSuite({ targetDir, onEvent = () => {}, opts = {} }) {
     const rand = await diskRandom(targetDir, { fileMb: cfg.diskFileMb, seconds: cfg.diskSeconds, onProgress: (p) => live({ diskRandom: p }) });
     if (rand.read_iops) metrics.disk_rand_read = rand.read_iops;
     if (rand.write_iops) metrics.disk_rand_write = rand.write_iops;
+    // 延迟随 IOPS 一起上报：它是判断"这个 IOPS 到底来自磁盘还是页缓存"的唯一依据。
+    // QD1 下 IOPS = 1e6/延迟(μs)，延迟低于 10μs 就只可能是内存。
+    if (rand.detail?.readLatUs) metrics.disk_rand_read_lat_us = rand.detail.readLatUs;
+    if (rand.detail?.writeLatUs) metrics.disk_rand_write_lat_us = rand.detail.writeLatUs;
     detail.disk_random = rand.detail;
     caveats.push(...(rand.caveats || []));
     return true;

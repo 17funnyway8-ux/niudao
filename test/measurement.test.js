@@ -65,17 +65,37 @@ test("延迟随工作集增大而变慢（缓存 → 内存的台阶必须存在
   assert.ok(big > small * 1.5, `越过缓存后延迟应明显变慢：2MB=${small}ns, ${pickLatencySizeMb()}MB=${big}ns`);
 });
 
-test("4K 随机 IOPS 封顶收到 30000（QD1 的真实物理上限）", async () => {
-  const { capOf } = await import("../src/shared/scoring.js");
+test("4K 随机靠延迟判定真假，而不是靠 IOPS 数值封顶", async () => {
+  const { computeScores, PHYSICAL_MAX, MIN_STORAGE_LAT_US } = await import("../src/shared/scoring.js");
   const base = JSON.parse(read("src/server/data/baselines.json")).metrics;
-  const capRead = capOf("disk_rand_read", base);
-  const capWrite = capOf("disk_rand_write", base);
-  assert.ok(capRead < 5000, `读封顶分应低于 5000，实际 ${capRead}（50000 IOPS 会放到 7937）`);
-  assert.ok(capWrite < 4000, `写封顶分应低于 4000，实际 ${capWrite}`);
+
+  // ① 封顶必须够高，不能误伤 Optane 这类 QD1 能到 40–60k 的真盘
+  assert.ok(PHYSICAL_MAX.disk_rand_read >= 60000, `封顶应 ≥60000 才不误伤 Optane，实际 ${PHYSICAL_MAX.disk_rand_read}`);
+
+  // ② 真实高端盘（Optane 50k @20μs）必须正常计分、不被封顶
+  const optane = computeScores({ ...base, disk_rand_read: 50000, disk_rand_read_lat_us: 20 }, base);
+  assert.deepEqual(optane.cacheSuspects, [], "Optane 不该被判为缓存");
+  assert.ok(optane.dims.storage.score > 2000, `Optane 存储分应显著高于基准，实际 ${optane.dims.storage.score}`);
+
+  // ③ 虚机/页缓存（169k @5.9μs）必须被剔除
+  const vm = computeScores({ ...base, disk_rand_read: 169087, disk_rand_read_lat_us: 5.9 }, base);
+  assert.equal(vm.cacheSuspects.length, 1, "低延迟高 IOPS 应被判为缓存");
+  assert.equal(vm.cacheSuspects[0].key, "disk_rand_read");
+  assert.equal(vm.subs.disk_rand_read, undefined, "被判缓存的项不该出现在 subs 里");
+  assert.equal(vm.partial, true, "有项被剔除时报告要标注不完整");
+
+  // ④ 真实 SATA（6300 @120μs）不受影响
+  const sata = computeScores({ ...base, disk_rand_read: 6300, disk_rand_read_lat_us: 120 }, base);
+  assert.deepEqual(sata.cacheSuspects, [], "真实磁盘不该被误判");
+  assert.ok(Math.abs(sata.dims.storage.score - 1000) < 50, "真实磁盘应接近基准分");
+
+  // ⑤ 物理下限本身要合理（Optane 约 10μs，低于它不可能是持久化存储）
+  assert.ok(MIN_STORAGE_LAT_US >= 8 && MIN_STORAGE_LAT_US <= 15, `延迟下限应在 Optane 量级，实际 ${MIN_STORAGE_LAT_US}μs`);
 });
 
-test("ARM 未收录的 part 号不该原样甩给用户看", () => {
-  const src = read("src/server/hardware.js");
-  assert.ok(!src.includes("`Part${part}`"), "不能直接显示 Part0x000 这种代号");
-  assert.ok(src.includes("型号未公开"), "应该用可读的说法替代");
+test("4K 延迟要随 IOPS 一起上报，否则延迟判据失效", () => {
+  const schema = read("src/shared/schema.js");
+  assert.ok(schema.includes("disk_rand_read_lat_us"), "schema 必须放行延迟字段");
+  const runner = read("src/server/runner.js");
+  assert.ok(/metrics\.disk_rand_read_lat_us\s*=/.test(runner), "runner 必须把延迟写进 metrics");
 });

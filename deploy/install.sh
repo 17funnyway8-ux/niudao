@@ -93,7 +93,10 @@ WantedBy=multi-user.target
 UNIT
 
 systemctl daemon-reload
-systemctl enable --now niudao-lb >/dev/null 2>&1
+systemctl enable niudao-lb >/dev/null 2>&1
+# 必须 restart 而不是 enable --now：服务已在跑时 --now 不会重启它，
+# 结果是磁盘上的代码/基准更新了、进程里还是老的（踩过：426 不生效 + 分数按旧基准算成 1932）
+systemctl restart niudao-lb
 sleep 3
 
 # ---------- 5. 验证 ----------

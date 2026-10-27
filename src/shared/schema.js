@@ -24,6 +24,10 @@ export const PLAUSIBLE = {
   disk_seq_write: [0.5, 30000],
   disk_rand_read: [1, 200000],
   disk_rand_write: [1, 200000],
+  // 4K 随机访问延迟（μs）。只用于校验 IOPS 是否来自真实磁盘，不参与评分权重。
+  // 下限 0.1μs 是 DRAM 量级，超过 100000μs（100ms）基本是测量出了问题。
+  disk_rand_read_lat_us: [0.1, 100000],
+  disk_rand_write_lat_us: [0.1, 100000],
 };
 
 const str = (v, max = 120) =>
